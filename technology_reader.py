@@ -5,7 +5,7 @@ from typing import Any
 
 from lua_parser import TableReader, matching_braces, parse_prototypes, tokenize
 
-DIRECT_FIELDS = {"prerequisites", "unit", "max_level", "level", "research_trigger"}
+DIRECT_FIELDS = {"prerequisites", "unit", "max_level", "level", "research_trigger", "effects"}
 
 
 def _static_member(tokens: list[tuple[str, str]], position: int) -> tuple[str, int] | None:
@@ -136,6 +136,17 @@ def build_technology_payload(prototypes: dict[str, dict[str, Any]], localized_na
                     ingredients.append({"name": ingredient_name, "amount": amount})
         if not isinstance(initial_level, (int, float)):
             initial_level = 1
+        effects = prototype.get("effects", [])
+        if isinstance(effects, dict):
+            effects = [effects[key] for key in sorted(effects, key=lambda value: str(value))]
+        unlock_recipes = [
+            effect["recipe"]
+            for effect in effects
+            if isinstance(effects, list)
+            and isinstance(effect, dict)
+            and effect.get("type") == "unlock-recipe"
+            and isinstance(effect.get("recipe"), str)
+        ] if isinstance(effects, list) else []
         result[name] = {
             "name": name,
             "label": localized_names.get(name, name),
@@ -147,5 +158,6 @@ def build_technology_payload(prototypes: dict[str, dict[str, Any]], localized_na
             "time": time if isinstance(time, (int, float)) else None,
             "maxLevel": max_level,
             "hasResearchTrigger": isinstance(prototype.get("research_trigger"), dict),
+            "unlockRecipes": unlock_recipes,
         }
     return result

@@ -2,7 +2,7 @@
 
 ## Current Role
 
-The tokenizer and `parse_prototypes` extract literal Lua tables containing a requested `type` and a string `name`. `TableReader` supports string, number, boolean, nil, keyed, and sequence values. This parser is shared by recipe and technology readers.
+The tokenizer and `parse_prototypes` extract literal Lua tables containing a requested `type` and a string `name`. `TableReader` supports signed and unsigned numbers, strings, booleans, nil, keyed, and sequence values. This parser is shared by recipe, technology, item, machine, module, and beacon readers.
 
 ## Boundary
 

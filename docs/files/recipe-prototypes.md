@@ -4,7 +4,7 @@
 
 Recipe prototypes provide `name`, `categories`, `ingredients`, `results` or legacy `result`/`result_count`, `energy_required`, availability field `enabled`, and visibility fields such as `hidden` and `hide_from_player_crafting`. The installed Base recipe file uses plural `categories`. The file contains many `enabled = false` entries; technologies can unlock these via `unlock-recipe` effects.
 
-The current item reader only consumes ingredients/results, a `normal` variant, and energy. It drops fluids and does not preserve categories, availability, or `allow_productivity`.
+The crafting reader consumes item and fluid ingredients/results, chooses one effective variant (`normal`, then `expensive`, then top-level), and retains categories, energy, enabled/visibility flags, productivity permission, ranges, and probabilities. Recipe unlocks are joined from technology effects. It retains fluid-only recipes in the prototype catalog and attaches item-producing recipes to item graph nodes.
 
 ## Parsing Guidance
 

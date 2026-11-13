@@ -27,8 +27,10 @@ The outputs are always `factorio-technology-costs.html` and `factorio-crafting.h
 
 - `lua_parser.py` extracts static prototype tables.
 - `technology_reader.py` reads technologies and applies static technology updates.
-- `item_reader.py` builds item and recipe relationships.
-- `locale_reader.py` loads English `[item-name]` and `[technology-name]` labels.
+- `item_reader.py` builds item and recipe relationships, unlock availability, and production prototype catalogs.
+- `locale_reader.py` loads English item, fluid, entity, and technology labels.
 - `technology_page.py` writes the technology cost planner.
 - `crafting_page.py` writes the crafting mall planner.
 - `technology_costs.py` defines ordered mod sets, defaults, and output paths, then orchestrates generation.
+
+Run `.\.venv\Scripts\python.exe -m unittest discover -s tests -v` to validate parser extraction and generated-page data. The real-data integration test requires a Factorio data directory and fails if it cannot be found; set `FACTORIO_DATA` to its location.

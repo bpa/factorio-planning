@@ -102,6 +102,11 @@ class TableReader:
         if kind == "number":
             self.position += 1
             return float(value) if any(char in value for char in ".eE") else int(value)
+        if value == "-" and self.position + 1 < len(self.tokens) and self.tokens[self.position + 1][0] == "number":
+            self.position += 2
+            number = self.tokens[self.position - 1][1]
+            parsed = float(number) if any(char in number for char in ".eE") else int(number)
+            return -parsed
         if kind == "identifier" and value in ("true", "false", "nil"):
             self.position += 1
             return {"true": True, "false": False, "nil": None}[value]

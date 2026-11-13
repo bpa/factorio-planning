@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from crafting_page import write_crafting_page
-from item_reader import read_item_graph
+from item_reader import read_crafting_data
 from locale_reader import read_locale
 from technology_page import write_technology_page
 from technology_reader import build_technology_payload, read_technologies
@@ -40,12 +40,45 @@ def main() -> int:
             if not technology_prototypes:
                 raise ValueError(f"No technology prototypes found for {mod_name} under {FACTORIO_DATA}")
             technology_datasets[mod_name] = build_technology_payload(technology_prototypes, localized["technology-name"])
-            items = read_item_graph(FACTORIO_DATA, packages)
+            crafting_data = read_crafting_data(FACTORIO_DATA, packages, technology_prototypes)
+            items = crafting_data["items"]
             if not items:
                 raise ValueError(f"No recipe item graph found for {mod_name} under {FACTORIO_DATA}")
             for name, item in items.items():
                 item["label"] = localized["item-name"].get(name, name)
-            item_datasets[mod_name] = items
+            catalog = crafting_data["catalog"]
+            for machine in catalog["machines"]:
+                machine["label"] = localized["entity-name"].get(machine["name"], machine["name"])
+            for module in catalog["modules"]:
+                module["label"] = localized["item-name"].get(module["name"], module["name"])
+            for beacon in catalog["beacons"]:
+                beacon["label"] = localized["entity-name"].get(beacon["name"], beacon["name"])
+            fluid_names = {
+                material["name"]
+                for recipe in catalog["fluidRecipes"]
+                for material in recipe["ingredients"] + recipe["outputs"]
+                if material["type"] == "fluid"
+            }
+            catalog["fluidLabels"] = {
+                name: localized["fluid-name"].get(name, name) for name in fluid_names
+            }
+            unlocked_names = {
+                technology_name
+                for item in items.values()
+                for recipe in item["recipes"]
+                for technology_name in recipe["unlockedBy"]
+            }
+            unlocked_names.update(
+                technology_name
+                for recipe in catalog["fluidRecipes"]
+                for technology_name in recipe["unlockedBy"]
+            )
+            catalog["technologyLabels"] = {
+                name: technology_datasets[mod_name][name]["label"]
+                for name in unlocked_names
+                if name in technology_datasets[mod_name]
+            }
+            item_datasets[mod_name] = crafting_data
 
         for output in (TECHNOLOGY_OUTPUT, CRAFTING_OUTPUT):
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +88,7 @@ def main() -> int:
         print(f"Error: {error}", file=sys.stderr)
         return 1
     print(f"Created {TECHNOLOGY_OUTPUT.resolve()} with {len(technology_datasets['base'])} Base and {len(technology_datasets['space-age'])} Space Age technologies.")
-    print(f"Created {CRAFTING_OUTPUT.resolve()} with {sum(bool(item['recipes']) for item in item_datasets['base'].values())} Base and {sum(bool(item['recipes']) for item in item_datasets['space-age'].values())} Space Age craftable items.")
+    print(f"Created {CRAFTING_OUTPUT.resolve()} with {sum(bool(item['recipes']) for item in item_datasets['base']['items'].values())} Base and {sum(bool(item['recipes']) for item in item_datasets['space-age']['items'].values())} Space Age craftable items.")
     return 0
 
 

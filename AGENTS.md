@@ -57,16 +57,22 @@ Edit the Python templates rather than generated HTML; rerun the top-level script
 
 ## Constraints And Caveats
 
-- `lua_parser.py` is not a Lua interpreter. It extracts static tables; computed expressions and Factorio runtime behavior are not evaluated. Factorio files can use `data`, `require`, functions, loops, and helper-generated prototypes. When a prototype is missing, first check whether it is dynamically generated or lives in a file outside the currently supported recipe/technology paths.
-- The recipe reader currently reads `prototypes/recipe.lua` from each configured package. Expanding file coverage should preserve package ordering and later-definition-wins behavior.
+- `lua_parser.py` is not a Lua interpreter. It extracts static tables; computed expressions and Factorio runtime behavior are not evaluated. Factorio files can use `data`, `require`, functions, loops, and helper-generated prototypes. When a prototype is missing, first check whether it is dynamically generated or lives outside the configured recipe, item, or entity prototype files.
+- The crafting reader reads `prototypes/recipe.lua`, `prototypes/item.lua`, and `prototypes/entity/entities.lua` from each configured package. Preserve package ordering and later-definition-wins behavior.
 - The technology update reader supports a limited set of direct static assignments. Do not assume it applies arbitrary Lua update code.
-- Locale support is English only and currently merges only `[item-name]` and `[technology-name]`.
+- Locale support is English only and merges `[item-name]`, `[fluid-name]`, `[entity-name]`, and `[technology-name]`.
 - Browser tests should exercise both datasets. In particular, keep the dataset-toggle selectors separate from the crafting list-filter selectors.
 - Factorio installation files are inputs only; do not modify them.
 
 ## Validation
 
-There is no automated test suite in the repository. The quickest end-to-end check is the generator command above. It should report Base and Space Age technology/item counts and create both pages.
+Run the parser and generated-page tests first:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+The suite includes a required integration test against the configured Factorio data directory. It fails when the data directory is unavailable; set `FACTORIO_DATA` when the installation is not at the default path. Then run the generator command above. It should report Base and Space Age technology/item counts and create both pages.
 
 For a UI smoke check, open both generated HTML files and verify:
 

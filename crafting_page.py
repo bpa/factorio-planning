@@ -22,15 +22,59 @@ document.querySelectorAll('.mod-switch button').forEach(button=>button.addEventL
 
 
 def write_crafting_page(datasets: dict[str, dict[str, Any]], output: Path, default_mod: str = "base") -> None:
-    labels = {mod: {name: item.get("label", name) for name, item in items.items()} for mod, items in datasets.items()}
-    payload = json.dumps(datasets, ensure_ascii=False, separators=(",", ":"))
+    page_datasets: dict[str, dict[str, Any]] = {}
+    catalogs: dict[str, dict[str, Any]] = {}
+    labels: dict[str, dict[str, str]] = {}
+    for mod, data in datasets.items():
+        items = dict(data["items"])
+        items["__prototype_catalog__"] = {"name": "__prototype_catalog__", "recipes": []}
+        page_datasets[mod] = items
+        catalogs[mod] = dict(data["catalog"])
+        catalogs[mod]["machineByName"] = {
+            machine["name"]: machine for machine in catalogs[mod]["machines"]
+        }
+        labels[mod] = {name: item.get("label", name) for name, item in data["items"].items()}
+        labels[mod]["__prototype_catalog__"] = ""
+    payload = json.dumps(page_datasets, ensure_ascii=False, separators=(",", ":"))
     label_payload = json.dumps(labels, ensure_ascii=False, separators=(",", ":"))
+    catalog_payload = json.dumps(catalogs, ensure_ascii=False, separators=(",", ":"))
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     label_payload = label_payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    catalog_payload = catalog_payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     template = PAGE_TEMPLATE.replace(
         "</style>",
         ".header-tools{display:flex;align-items:center;gap:18px}@media(max-width:720px){.header-tools{justify-content:space-between;margin-top:12px}.counts{margin-top:0}}</style>",
         1,
     )
+    template = template.replace(
+        "</head>",
+        "<style>.recipe{margin:5px 0}.recipe summary{cursor:pointer}.recipe-info{padding:5px 0 2px 12px;font-size:.84rem;color:var(--muted)}.recipe-info div{margin:3px 0}#production-data{max-width:1180px;margin:0 auto 30px;padding:0 20px}#production-data>summary{cursor:pointer;font-weight:700;padding:10px 0}.catalog-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.catalog-section h2{font-size:1rem;margin:10px 0}.catalog-section ul{padding-left:20px;margin:0}.catalog-section li{padding:3px 0;font-size:.88rem;color:var(--muted)}@media(max-width:720px){.item{grid-template-columns:1fr;gap:8px}.actions{white-space:normal}}</style></head>",
+        1,
+    )
+    template = template.replace(
+        "</main><script>",
+        '</main><details id="production-data"><summary>Production prototype reference</summary><div id="prototype-catalog" class="catalog-grid"></div></details><script>',
+        1,
+    )
+    template = template.replace("()=>setDataset(button.dataset.mod)", "()=>window.setDataset(button.dataset.mod)", 1)
+    template = template.replace("search.addEventListener('input',render)", "search.addEventListener('input',()=>window.render())", 1)
+    template = template.replace("String(other===button)));render()}));", "String(other===button)));window.render()}));", 1)
+    template = template.replace(
+        "function save(){try{localStorage.setItem(storageKey+':'+modSet,JSON.stringify(assignments))}catch{}render()}",
+        "function save(){try{localStorage.setItem(storageKey+':'+modSet,JSON.stringify(assignments))}catch{}window.render()}",
+        1,
+    )
+    enhanced_script = r'''const catalogs=__CATALOGS__;
+function setDataset(next){if(!datasets[next])return;modSet=next;graph=datasets[next];itemLabels=labelsByDataset[next];loadAssignments();document.querySelectorAll('.mod-switch button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mod===next)));render()}
+function text(value,kind='item'){if(kind==='fluid')return catalogs[modSet].fluidLabels?.[value]||value;return itemLabels[value]||value}
+function materialText(material){const amount=material.amountMin===material.amountMax?String(material.amountMin):`${material.amountMin}-${material.amountMax}`;const chance=material.probability<1?` @ ${Math.round(material.probability*100)}%`:'';return `${text(material.name,material.type)} x ${amount}${chance}`}
+function machineText(machine){const footprint=machine.footprint?`${machine.footprint[0]}x${machine.footprint[1]} tiles`:'footprint unavailable';const fluids=[machine.fluidInput?'fluid input':'',machine.fluidOutput?'fluid output':''].filter(Boolean).join(', ')||'no fluid ports';return `${machine.label||machine.name} (speed ${machine.speed??'unknown'}, ${machine.moduleSlots} module slots, ${footprint}, ${fluids}; effects: ${machine.allowedEffects.join(', ')||'none'})`}
+function addField(parent,label,value){const row=document.createElement('div'),strong=document.createElement('strong');strong.textContent=`${label}: `;row.append(strong,document.createTextNode(value));parent.append(row)}
+function recipeElement(recipe,node){const details=document.createElement('details'),summary=document.createElement('summary'),info=document.createElement('div');details.className='recipe';info.className='recipe-info';const ingredients=recipe.ingredients.length?recipe.ingredients.map(materialText).join(' + '):'No ingredients';const outputs=recipe.outputs.map(materialText).join(' + ');summary.textContent=`${recipe.categories.join(', ')} | ${recipe.energy}s | ${ingredients} -> ${outputs}`;addField(info,'Variant',recipe.variant);addField(info,'Available in normal progression',recipe.available?'yes':'no');addField(info,'Visibility',`${recipe.hidden?'hidden recipe':'visible recipe'}; ${recipe.hideFromPlayerCrafting?'hidden from player crafting':'player-crafting visibility unchanged'}`);addField(info,'Productivity',recipe.allowProductivity?'allowed':'not allowed');if(node.subgroup)addField(info,'Item subgroup',node.subgroup);if(recipe.unlockedBy.length)addField(info,'Unlocked by',recipe.unlockedBy.map(name=>catalogs[modSet].technologyLabels?.[name]||name).join(', '));const machines=recipe.compatibleMachines.map(name=>catalogs[modSet].machineByName[name]).filter(Boolean);if(machines.length)addField(info,'Compatible machines',machines.map(machineText).join('; '));else if(recipe.handCraftable)addField(info,'Production method','Hand crafting');details.append(summary,info);return details}
+function renderCatalog(){const host=document.getElementById('prototype-catalog'),catalog=catalogs[modSet];host.replaceChildren();function section(title,entries,format){const wrapper=document.createElement('section'),heading=document.createElement('h2'),list=document.createElement('ul');wrapper.className='catalog-section';heading.textContent=title;for(const entry of entries){const item=document.createElement('li');item.textContent=format(entry);list.append(item)}wrapper.append(heading,list);host.append(wrapper)}section(`Machines (${catalog.machines.length})`,catalog.machines,machineText);section(`Modules (${catalog.modules.length})`,catalog.modules,module=>{const effects=Object.entries(module.effects||{}).map(([name,value])=>`${name} ${value.bonus>0?'+':''}${value.bonus}`).join(', ');return `${module.label||module.name}: ${effects||'no parsed effects'}${module.category?` (${module.category})`:''}`});section(`Beacons (${catalog.beacons.length})`,catalog.beacons,beacon=>`${beacon.label||beacon.name}: ${beacon.moduleSlots} slots, range ${beacon.supplyAreaDistance??'unknown'}, transmission ${beacon.distributionEffectivity??'unknown'}, effects ${beacon.allowedEffects.join(', ')||'none'}`);section(`Fluid recipes (${catalog.fluidRecipes.length})`,catalog.fluidRecipes,recipe=>`${recipe.name}: ${recipe.ingredients.map(materialText).join(' + ')||'no inputs'} -> ${recipe.outputs.map(materialText).join(' + ')}; machines ${recipe.compatibleMachines.join(', ')||'none'}`)}
+function render(){const query=search.value.trim().toLocaleLowerCase();const names=Object.keys(graph).filter(name=>name!=='__prototype_catalog__'&&graph[name].recipes.some(recipe=>recipe.available)&&(!query||text(name).toLocaleLowerCase().includes(query)||name.toLocaleLowerCase().includes(query))).filter(name=>filter==='all'||(filter==='unassigned'?!assignments[name]:assignments[name]===filter)).sort((a,b)=>text(a).localeCompare(text(b)));document.getElementById('mall-count').textContent=Object.values(assignments).filter(value=>value==='mall').length;document.getElementById('manual-count').textContent=Object.values(assignments).filter(value=>value==='manual').length;container.replaceChildren();if(!names.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No matching craftable items.';container.append(empty)}for(const name of names){const node=graph[name],row=document.createElement('article'),label=document.createElement('div'),detail=document.createElement('div'),actions=document.createElement('div');row.className='item';label.className='name';label.textContent=text(name);const key=document.createElement('span');key.className='key';key.textContent=[name,node.subgroup,node.hidden?'hidden':null].filter(Boolean).join(' · ');label.append(key);detail.className='recipes';for(const recipe of node.recipes.filter(candidate=>candidate.available))detail.append(recipeElement(recipe,node));actions.className='actions';for(const [state,title] of [['mall','Mall'],['manual','Build as needed']]){const button=document.createElement('button');button.type='button';button.className='choice';button.textContent=title;button.dataset.state=assignments[name]===state?state:'';button.setAttribute('aria-pressed',String(assignments[name]===state));button.onclick=()=>setState(name,state);actions.append(button)}row.append(label,detail,actions);container.append(row)}renderCatalog()}
+window.setDataset=setDataset;window.render=render;render();'''
+    enhanced_script = enhanced_script.replace("__CATALOGS__", catalog_payload)
     html = template.replace("__ITEMS__", payload).replace("__LABELS__", label_payload).replace("__DEFAULT_MOD__", json.dumps(default_mod))
+    html = html.replace("</script></body></html>", f"</script><script>{enhanced_script}</script></body></html>", 1)
     output.write_text(html, encoding="utf-8")

@@ -4,7 +4,12 @@ from pathlib import Path
 
 
 def read_locale(data_dir: Path, packages: tuple[str, ...]) -> dict[str, dict[str, str]]:
-    sections: dict[str, dict[str, str]] = {"item-name": {}, "technology-name": {}}
+    sections: dict[str, dict[str, str]] = {
+        "item-name": {},
+        "fluid-name": {},
+        "entity-name": {},
+        "technology-name": {},
+    }
     for package in packages:
         locale_dir = data_dir / package / "locale" / "en"
         for path in sorted(locale_dir.glob("*.cfg")):
