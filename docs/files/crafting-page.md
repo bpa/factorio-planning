@@ -1,8 +1,8 @@
-# `crafting_page.py`
+# Crafting Data Payload
 
 ## Current Role
 
-`write_crafting_page` serializes item datasets and localized labels into a standalone HTML template. The browser page supports Base/Space Age switching, search, All/Unsorted/Mall/Manual filters, and per-dataset `localStorage` assignments. The generated list displays each item's recipe inputs.
+`data_writer.py` serializes item datasets, localized labels, and production catalogs into `public/data/crafting.json`. The React app supports Base/Space Age switching, search, All/Unsorted/Mall/Manual filters, and per-dataset `localStorage` assignments. The list displays available recipes and their inputs, outputs, unlocks, and compatible machines.
 
 ## Current Limits
 

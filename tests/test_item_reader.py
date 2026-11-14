@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from crafting_page import write_crafting_page
+from data_writer import build_crafting_payload, write_crafting_data
 from item_reader import read_crafting_data
 from technology_reader import build_technology_payload, read_technologies
 
@@ -154,23 +155,33 @@ class CraftingDataTests(unittest.TestCase):
 
         self.assertEqual(payload["chemical-tech"]["unlockRecipes"], ["updated-recipe"])
 
-    def test_generated_page_embeds_recipe_and_catalog_data(self) -> None:
+    def test_crafting_json_contains_data_labels_and_catalog_indexes(self) -> None:
         data = self.read_data()
         data["catalog"]["fluidLabels"] = {"water": "Water", "steam": "Steam"}
         data["catalog"]["technologyLabels"] = {"chemical-tech": "Chemical technology"}
         for machine in data["catalog"]["machines"]:
             machine["label"] = machine["name"]
         with tempfile.TemporaryDirectory() as output_dir:
-            output = Path(output_dir) / "crafting.html"
-            write_crafting_page({"base": data}, output)
-            page = output.read_text(encoding="utf-8")
+            output = Path(output_dir) / "crafting.json"
+            write_crafting_data({"base": data}, output)
+            payload = json.loads(output.read_text(encoding="utf-8"))
 
-        self.assertIn('id="prototype-catalog"', page)
-        self.assertIn('"fluidRecipes"', page)
-        self.assertIn('"hideFromPlayerCrafting":true', page)
-        self.assertIn("window.render=render", page)
-        self.assertIn("fluid-only", page)
-        self.assertIn("Chemical technology", page)
+        self.assertTrue(any(
+            recipe["name"] == "fluid-product"
+            for item in payload["datasets"]["base"].values()
+            for recipe in item["recipes"]
+        ))
+        self.assertTrue(payload["datasets"]["base"]["gear"]["recipes"][0]["hideFromPlayerCrafting"])
+        self.assertIn("chemical-plant", payload["catalogs"]["base"]["machineByName"])
+        self.assertEqual(payload["catalogs"]["base"]["fluidLabels"]["water"], "Water")
+        self.assertEqual(payload["catalogs"]["base"]["technologyLabels"]["chemical-tech"], "Chemical technology")
+        self.assertEqual(payload["labels"]["base"]["gear"], "gear")
+        self.assertNotIn("__prototype_catalog__", payload["datasets"]["base"])
+
+    def test_crafting_payload_has_expected_sections(self) -> None:
+        payload = build_crafting_payload({"base": self.read_data()})
+
+        self.assertEqual(set(payload), {"datasets", "catalogs", "labels"})
 
 
 def factorio_data_path() -> Path:

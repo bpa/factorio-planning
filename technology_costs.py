@@ -7,10 +7,9 @@ import os
 import sys
 from pathlib import Path
 
-from crafting_page import write_crafting_page
+from data_writer import write_crafting_data, write_technology_data
 from item_reader import read_crafting_data
 from locale_reader import read_locale
-from technology_page import write_technology_page
 from technology_reader import build_technology_payload, read_technologies
 
 DEFAULT_DATA_DIR = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Factorio\data")
@@ -19,9 +18,9 @@ MOD_SETS = {
     "base": ("base",),
     "space-age": ("base", "quality", "elevated-rails", "recycler", "space-age"),
 }
-DEFAULT_MOD = "base"
-TECHNOLOGY_OUTPUT = Path.cwd() / "factorio-technology-costs.html"
-CRAFTING_OUTPUT = Path.cwd() / "factorio-crafting.html"
+DATA_OUTPUT = Path(__file__).parent / "public" / "data"
+TECHNOLOGY_OUTPUT = DATA_OUTPUT / "technologies.json"
+CRAFTING_OUTPUT = DATA_OUTPUT / "crafting.json"
 
 
 def main() -> int:
@@ -80,10 +79,8 @@ def main() -> int:
             }
             item_datasets[mod_name] = crafting_data
 
-        for output in (TECHNOLOGY_OUTPUT, CRAFTING_OUTPUT):
-            output.parent.mkdir(parents=True, exist_ok=True)
-        write_technology_page(technology_datasets, TECHNOLOGY_OUTPUT, DEFAULT_MOD)
-        write_crafting_page(item_datasets, CRAFTING_OUTPUT, DEFAULT_MOD)
+        write_technology_data(technology_datasets, TECHNOLOGY_OUTPUT)
+        write_crafting_data(item_datasets, CRAFTING_OUTPUT)
     except (OSError, UnicodeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

@@ -1,36 +1,30 @@
-# Factorio Technology and Crafting Planners
+# Factorio Planners
 
-Generate two standalone pages: a technology planner that totals science and research time for selected technologies and prerequisites, and a crafting mall planner that sorts craftable items into permanent mall production or occasional manual builds. Crafting choices are saved in the browser.
+A React single-page app combines the technology cost planner and crafting mall planner. Technology plans include prerequisite science and research time; crafting assignments are saved separately for Base and Space Age in browser storage.
 
-For codebase structure, module responsibilities, parser constraints, and validation guidance, see [AGENTS.md](AGENTS.md).
+## Data And Local Development
 
-## Setup
-
-Create the project virtual environment once, then use it to run the generator:
+Python reads Factorio's prototype and English locale files and writes the app's static datasets to `public/data/technologies.json` and `public/data/crafting.json`. Those JSON files are source inputs for the frontend and should be committed after updating them. The generated `pages/` site is build output and is ignored by git.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe .\technology_costs.py
+npm ci
+npm run dev
 ```
 
-The generator has no third-party Python dependencies. A Lua-runtime check of the project venv found no Lua module. Although packages such as `lupa` can execute Lua, Factorio prototype files depend on Factorio-specific globals, `require` paths, and data-stage initialization; running them in a generic Lua VM would require recreating that environment. The project therefore extracts static prototype tables with its local Lua parser.
+The Python generator has no third-party dependencies. Factorio data defaults to `C:\Program Files (x86)\Steam\steamapps\common\Factorio\data`; set `FACTORIO_DATA` to use another installation. `FACTORIO_DATA_DIR` remains supported as a fallback.
+
+Run the parsers and JSON contract tests with:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Build the static site into `pages/` with `npm run build`. To publish, configure repository Settings > Pages > Build and deployment > Source as **GitHub Actions**. The workflow builds from the committed JSON and deploys `pages/`; GitHub Pages does not automatically run this React/Vite build when a branch folder is selected.
 
 ## Data Sets
 
-Each generated page embeds both data sets and has a Base/Space Age toggle, so changing the view does not require rerunning the script. Space Age reads Base first, followed by `quality`, `elevated-rails`, `recycler`, and `space-age`; later prototype and locale definitions replace earlier definitions. Base reads only Base.
+The ordered packages are configured in `technology_costs.py`: Base reads `base`; Space Age reads `base`, `quality`, `elevated-rails`, `recycler`, and `space-age`. Later prototype and locale definitions replace earlier definitions.
 
-Run the top-level script without arguments. It defines the package ordering in `MOD_SETS`, generates both pages, and opens them in Base mode every time. The page toggle changes the current view without rerunning the script. The default data path is `C:\Program Files (x86)\Steam\steamapps\common\Factorio\data`; set `FACTORIO_DATA` to use another installation. `FACTORIO_DATA_DIR` remains supported as a fallback.
-
-The outputs are always `factorio-technology-costs.html` and `factorio-crafting.html` in the current directory.
-
-## Modules
-
-- `lua_parser.py` extracts static prototype tables.
-- `technology_reader.py` reads technologies and applies static technology updates.
-- `item_reader.py` builds item and recipe relationships, unlock availability, and production prototype catalogs.
-- `locale_reader.py` loads English item, fluid, entity, and technology labels.
-- `technology_page.py` writes the technology cost planner.
-- `crafting_page.py` writes the crafting mall planner.
-- `technology_costs.py` defines ordered mod sets, defaults, and output paths, then orchestrates generation.
-
-Run `.\.venv\Scripts\python.exe -m unittest discover -s tests -v` to validate parser extraction and generated-page data. The real-data integration test requires a Factorio data directory and fails if it cannot be found; set `FACTORIO_DATA` to its location.
+The parser extracts static Lua tables; it does not run Factorio's data-stage Lua. See [AGENTS.md](AGENTS.md) for parser constraints and project structure.

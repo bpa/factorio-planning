@@ -1,32 +1,13 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Standalone planning tools for Factorio technologies and crafting.">
-<title>Factorio Planners</title>
-<style>
-:root{color-scheme:light;--bg:#f4f6f4;--surface:#fff;--ink:#202a28;--muted:#586777;--line:#d6dbd3;--accent:#276b52}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
-main{max-width:760px;margin:0 auto;padding:56px 24px}
-h1{margin:0;font-size:2rem}
-p{color:var(--muted);margin:8px 0 28px}
-nav{border-top:1px solid var(--line)}
-a{display:flex;justify-content:space-between;gap:16px;padding:18px 4px;border-bottom:1px solid var(--line);color:var(--accent);font-size:1.1rem;font-weight:650;text-decoration:none}
-a:hover{text-decoration:underline;text-underline-offset:4px}
-a span{color:var(--muted);font-size:.92rem;font-weight:400}
-@media(max-width:520px){main{padding:36px 20px}a{flex-direction:column;gap:2px}}
-</style>
-</head>
-<body>
-<main>
-<h1>Factorio Planners</h1>
-<p>Choose a tool to plan research costs or organize crafting builds.</p>
-<nav aria-label="Factorio planning tools">
-<a href="factorio-technology-costs.html">Technology Cost Planner <span>Science and research time</span></a>
-<a href="factorio-crafting.html">Crafting Mall Planner <span>Sort craftable items into Mall or Manual builds</span></a>
-</nav>
-</main>
-</body>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="description" content="Factorio technology and crafting planners." />
+		<title>Factorio Planners</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="/src/main.jsx"></script>
+	</body>
 </html>

@@ -2,22 +2,17 @@
 
 ## Project Goal
 
-This project reads Factorio prototype and English locale data, then generates two standalone HTML tools:
-
-- `factorio-technology-costs.html` calculates science and research time for selected technologies and prerequisites.
-- `factorio-crafting.html` lists recipe-produced items and lets players classify them as Mall or Manual builds.
-
-The generated pages embed both Base and Space Age data. Each page opens in Base mode and can switch datasets in the browser without rerunning Python. Mall/Manual choices are stored in browser local storage separately for each dataset.
+This project reads Factorio prototype and English locale data into static JSON, then builds a React single-page app in the ignored `pages/` directory. The app combines the technology cost planner and crafting mall planner. Mall/Manual choices are stored in browser local storage separately for each dataset.
 
 ## Start Here
 
-On Windows, run from the project directory:
+On Windows, run from the project directory to refresh the checked-in JSON source data:
 
 ```powershell
 .\.venv\Scripts\python.exe .\technology_costs.py
 ```
 
-There are no CLI options or third-party Python dependencies. The script overwrites both generated HTML files in the current directory. Use `FACTORIO_DATA` to point to a different Factorio `data` directory; `FACTORIO_DATA_DIR` is a supported fallback. The default is the Steam installation path in `technology_costs.py`.
+There are no CLI options or third-party Python dependencies. The script writes `public/data/technologies.json` and `public/data/crafting.json`. Commit these JSON files after updating them. Use `FACTORIO_DATA` to point to a different Factorio `data` directory; `FACTORIO_DATA_DIR` is a supported fallback. The default is the Steam installation path in `technology_costs.py`.
 
 If the venv is missing:
 
@@ -35,12 +30,13 @@ python -m venv .venv
 
 Readers process those packages in order. Later prototypes and locale labels override earlier definitions. `DEFAULT_MOD` controls the initial dataset embedded by each page and should remain `base` unless the product requirement changes.
 
-Generation flow:
+Data generation flow:
 
 1. `locale_reader.py` reads English `[item-name]` and `[technology-name]` sections.
 2. `technology_reader.py` loads `prototypes/technology.lua` and applies static technology assignments from package update files.
 3. `item_reader.py` loads each package's `prototypes/recipe.lua`, replaces recipes with later definitions of the same name, and builds item-to-recipe relationships.
-4. `technology_page.py` and `crafting_page.py` serialize both datasets into their standalone HTML templates.
+4. `data_writer.py` serializes technology and crafting payloads to `public/data/*.json`.
+5. Vite copies `public/` into the production site and builds the React app to `pages/`.
 
 ## File Ownership
 
@@ -49,11 +45,13 @@ Generation flow:
 - `technology_reader.py`: technology prototypes, recognized static updates, and browser payload conversion.
 - `item_reader.py`: recipe ingredient/output normalization and item graph.
 - `locale_reader.py`: ordered English locale merging.
-- `technology_page.py`: technology planner HTML, styles, and client-side behavior.
-- `crafting_page.py`: mall planner HTML, styles, dataset toggle, and local persistence.
+- `data_writer.py`: static JSON serialization for frontend consumption.
+- `src/App.jsx`: planner views, dataset toggle, and browser persistence.
+- `vite.config.js`: React build configuration; `pages/` is generated output and ignored.
+- `.github/workflows/pages.yml`: builds and deploys the site with GitHub Actions.
 - `README.md`: user setup and behavior overview.
 
-Edit the Python templates rather than generated HTML; rerun the top-level script to refresh both outputs.
+Update the React source under `src/` for UI changes. Rerun the Python generator and commit `public/data/*.json` whenever Factorio data changes. Build output in `pages/` is not committed; GitHub Actions deploys it from the committed JSON.
 
 ## Constraints And Caveats
 
@@ -66,19 +64,18 @@ Edit the Python templates rather than generated HTML; rerun the top-level script
 
 ## Validation
 
-Run the parser and generated-page tests first:
+Run parser and JSON contract tests:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The suite includes a required integration test against the configured Factorio data directory. It fails when the data directory is unavailable; set `FACTORIO_DATA` when the installation is not at the default path. Then run the generator command above. It should report Base and Space Age technology/item counts and create both pages.
+The suite includes required integration tests against the configured Factorio data directory. They fail when the data directory is unavailable; set `FACTORIO_DATA` when the installation is not at the default path. The Python generator should report Base and Space Age technology/item counts and create both JSON files. Run `npm ci` and `npm run build` to create the ignored Pages output.
 
-For a UI smoke check, open both generated HTML files and verify:
+For a UI smoke check, run `npm run dev` and verify:
 
-- each opens in Base mode;
-- each toggle switches to Space Age without regenerating;
-- the technology search/results change with the selected dataset;
-- crafting switches between the expected item sets, and Mall/Manual choices remain isolated by dataset.
+- the app opens in Base mode and the tabs switch between planners;
+- the dataset toggle changes planner results to Space Age;
+- crafting search and list filters work, and Mall/Manual choices remain isolated by dataset.
 
 Current counts depend on the installed Factorio version. With the installation used during authoring, generation reported 193/273 technologies and 182/271 craftable items for Base/Space Age respectively.
