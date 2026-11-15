@@ -9,12 +9,17 @@ import {
   calculateCraftDuration,
   calculateMallRates,
   calculateProductionRate,
+  calculateProfileDensity,
+  calculateProfileIO,
+  createProfile,
   createStableId,
   datasetStorageKey,
+  deleteProfile,
   materialKey,
   promoteMaterialToInput,
   recommendProductionOptions,
   solveMallProduction,
+  updateProfile,
 } from '../src/planner.js';
 
 let glpk;
@@ -172,6 +177,42 @@ test('step 6 calculates craft time, throughput, and output rates with determinis
 
   assert.equal(recommendations[0].recipeName, 'gear-making');
   assert.ok(recommendations[0].reasons.some((reason) => reason.includes('iron-plate')));
+});
+
+test('step 8 validates profiles, densities, IO counts, and safe CRUD operations', () => {
+  const profile = createProfile({ name: 'Compact', maxFootprint: 100, maxIO: 3 });
+  assert.equal(profile.name, 'Compact');
+  assert.equal(profile.maxFootprint, 100);
+  assert.equal(profile.maxIO, 3);
+
+  assert.throws(() => createProfile({ name: '   ', maxFootprint: 10 }), TypeError);
+  assert.throws(() => createProfile({ name: 'Bad', maxIO: -1 }), TypeError);
+  assert.throws(() => createProfile({ name: 'Bad', maxIO: 1.5 }), TypeError);
+
+  const normal = calculateProfileDensity(profile, 30);
+  assert.equal(normal.rating, 'Normal');
+  assert.equal(normal.ratio, 0.3);
+  assert.equal(calculateProfileDensity(profile, 40).rating, 'Uncommon');
+  assert.equal(calculateProfileDensity(profile, 50).rating, 'Rare');
+  assert.equal(calculateProfileDensity(profile, 55).rating, 'Epic');
+  assert.equal(calculateProfileDensity(profile, 58).rating, 'Legendary');
+  assert.equal(calculateProfileDensity(profile, 70).rating, 'Unrealistic');
+  assert.equal(calculateProfileDensity({ ...profile, maxFootprint: null }, 10).density, null);
+
+  const io = calculateProfileIO(profile, [{ type: 'item', name: 'iron-ore' }], [{ type: 'item', name: 'iron-ore' }, { type: 'fluid', name: 'water' }]);
+  assert.equal(io.inputCount, 1);
+  assert.equal(io.outputCount, 2);
+  assert.equal(io.total, 3);
+  assert.equal(io.overage, false);
+  assert.equal(calculateProfileIO(profile, [{ type: 'item', name: 'iron-ore' }, { type: 'fluid', name: 'water' }], [{ type: 'item', name: 'iron-ore' }, { type: 'fluid', name: 'water' }, { type: 'item', name: 'gear' }]).overage, true);
+
+  const updated = updateProfile(profile, { maxIO: 5, name: 'Updated' });
+  assert.equal(updated.name, 'Updated');
+  assert.equal(updated.maxIO, 5);
+
+  const afterDelete = deleteProfile([profile, updateProfile(profile, { id: 'next-profile', name: 'Second', maxIO: 2 })], profile.id);
+  assert.equal(afterDelete.length, 1);
+  assert.equal(afterDelete[0].name, 'Second');
 });
 
 test('step 7 fits integer machine counts to goal rates and reports net material rates', async () => {

@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react';
-import { CRAFTING_STORAGE_KEY, datasetStorageKey } from './planner.js';
+import {
+  CRAFTING_STORAGE_KEY,
+  calculateProfileDensity,
+  createProfile,
+  datasetStorageKey,
+  deleteProfile,
+  getProfileSummary,
+  normalizeProfile,
+  updateProfile,
+} from './planner.js';
 
 const DATA_URL = `${import.meta.env.BASE_URL}data/`;
 const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
@@ -77,6 +86,11 @@ function App() {
   const [levels, setLevels] = useState(1);
   const [filter, setFilter] = useState('all');
   const [assignments, setAssignments] = useState({});
+  const [profiles, setProfiles] = useState([]);
+  const [activeProfileId, setActiveProfileId] = useState(null);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState({ id: null, name: '', maxFootprint: '', maxIO: '' });
+  const [profileError, setProfileError] = useState('');
 
   useEffect(() => {
     Promise.all([
@@ -96,11 +110,28 @@ function App() {
     try {
       const saved = localStorage.getItem(datasetStorageKey(mod))
         || (mod === 'space-age' ? localStorage.getItem(CRAFTING_STORAGE_KEY) : null);
-      setAssignments(JSON.parse(saved || '{}') || {});
+      const parsed = saved ? JSON.parse(saved) : {};
+      const state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && ('assignments' in parsed || 'profiles' in parsed || 'activeProfileId' in parsed)
+        ? parsed
+        : { assignments: parsed || {}, profiles: [], activeProfileId: null };
+      setAssignments(state.assignments || {});
+      setProfiles(Array.isArray(state.profiles) ? state.profiles : []);
+      setActiveProfileId(typeof state.activeProfileId === 'string' ? state.activeProfileId : null);
     } catch {
       setAssignments({});
+      setProfiles([]);
+      setActiveProfileId(null);
     }
   }, [mod]);
+
+  function persistDatasetState(nextAssignments, nextProfiles = profiles, nextActiveProfileId = activeProfileId) {
+    try {
+      const payload = { version: 1, assignments: nextAssignments || {}, profiles: nextProfiles || [], activeProfileId: nextActiveProfileId || null };
+      localStorage.setItem(datasetStorageKey(mod), JSON.stringify(payload));
+    } catch {
+      // Storage can be disabled.
+    }
+  }
 
   const technologies = data?.technologies[mod] || {};
   const crafting = data?.crafting;
@@ -120,7 +151,58 @@ function App() {
     if (next[name] === state) delete next[name];
     else next[name] = state;
     setAssignments(next);
-    try { localStorage.setItem(datasetStorageKey(mod), JSON.stringify(next)); } catch { /* Storage can be disabled. */ }
+    persistDatasetState(next, profiles, activeProfileId);
+  }
+
+  function openProfileEditor(profile = null) {
+    setProfileDraft({
+      id: profile?.id || null,
+      name: profile?.name || '',
+      maxFootprint: profile?.maxFootprint ?? '',
+      maxIO: profile?.maxIO ?? '',
+    });
+    setProfileError('');
+    setProfileEditorOpen(true);
+  }
+
+  function saveProfile() {
+    const name = profileDraft.name.trim();
+    if (!name) {
+      setProfileError('Profile names must not be empty.');
+      return;
+    }
+    const maxFootprintValue = profileDraft.maxFootprint === '' || profileDraft.maxFootprint === null ? null : Number(profileDraft.maxFootprint);
+    if (profileDraft.maxFootprint !== '' && (!Number.isFinite(maxFootprintValue) || maxFootprintValue < 0)) {
+      setProfileError('Maximum footprint must be a non-negative number or left blank.');
+      return;
+    }
+    const maxIOValue = profileDraft.maxIO === '' || profileDraft.maxIO === null ? null : Number(profileDraft.maxIO);
+    if (profileDraft.maxIO !== '' && (!Number.isFinite(maxIOValue) || maxIOValue < 0 || !Number.isInteger(maxIOValue))) {
+      setProfileError('Maximum IO must be a non-negative integer or left blank.');
+      return;
+    }
+    const normalized = normalizeProfile({
+      id: profileDraft.id || crypto.randomUUID(),
+      name,
+      maxFootprint: maxFootprintValue,
+      maxIO: maxIOValue,
+    });
+    const nextProfiles = [...profiles.filter((profile) => profile.id !== normalized.id), normalized].sort((left, right) => left.name.localeCompare(right.name));
+    setProfiles(nextProfiles);
+    setActiveProfileId((current) => (profileDraft.id ? current : normalized.id));
+    setProfileEditorOpen(false);
+    persistDatasetState(assignments, nextProfiles, profileDraft.id ? activeProfileId || normalized.id : normalized.id);
+  }
+
+  function deleteSelectedProfile(profile) {
+    if (!profile) return;
+    const existingReferences = Object.values(assignments).some((value) => value === profile.id);
+    const confirmMessage = existingReferences ? `Delete profile “${profile.name}”? It will be removed from linked assignments.` : `Delete profile “${profile.name}”?`;
+    if (!window.confirm(confirmMessage)) return;
+    const nextProfiles = deleteProfile(profiles, profile.id);
+    setProfiles(nextProfiles);
+    if (activeProfileId === profile.id) setActiveProfileId(null);
+    persistDatasetState(assignments, nextProfiles, activeProfileId === profile.id ? null : activeProfileId);
   }
 
   function getTechnologyPlan() {
@@ -186,6 +268,8 @@ function App() {
 
   function renderCrafting() {
     const query = search.trim().toLocaleLowerCase();
+    const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || null;
+    const density = activeProfile ? calculateProfileDensity(activeProfile, 0) : { density: null, ratio: null, rating: 'None' };
     const names = Object.keys(items).filter((name) => items[name].recipes.some((recipe) => recipe.available)
       && (!query || itemName(name).toLocaleLowerCase().includes(query) || name.toLowerCase().includes(query)))
       .filter((name) => filter === 'all' || (filter === 'unassigned' ? !assignments[name] : assignments[name] === filter))
@@ -204,7 +288,25 @@ function App() {
     return <>
       <div className="craft-toolbar">
         <div className="search-control"><label htmlFor="item-search">Search items</label><input id="item-search" type="search" placeholder="Name or internal ID" value={search} onChange={(event) => setSearch(event.target.value)} autoComplete="off" /></div>
+        <div className="profile-controls">
+          <label htmlFor="profile-select">Profile</label>
+          <div className="profile-row">
+            <select id="profile-select" value={activeProfileId || 'none'} onChange={(event) => {
+              const nextProfileId = event.target.value === 'none' ? null : event.target.value;
+              setActiveProfileId(nextProfileId);
+              persistDatasetState(assignments, profiles, nextProfileId);
+            }}>
+              <option value="none">None</option>
+              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+            </select>
+            <button type="button" className="profile-button" onClick={() => openProfileEditor()}>Manage Profiles</button>
+          </div>
+        </div>
         <div className="segmented" role="group" aria-label="Show items">{[['all', 'All'], ['unassigned', 'Unsorted'], ['mall', 'Mall'], ['manual', 'Manual']].map(([value, title]) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{title}</button>)}</div>
+      </div>
+      <div className="profile-summary-wrap">
+        <div className="summary-card compact"><strong>{activeProfile ? getProfileSummary(activeProfile) : 'None'}</strong><span>Active profile</span></div>
+        <div className="summary-card compact"><strong>{density.rating}</strong><span>Density {density.density === null ? 'None' : `${density.density.toFixed(2)} / ${activeProfile?.maxFootprint ?? '∞'}`}</span></div>
       </div>
       <div className="craft-counts"><span><strong>{Object.values(assignments).filter((value) => value === 'mall').length}</strong> mall</span><span><strong>{Object.values(assignments).filter((value) => value === 'manual').length}</strong> manual</span></div>
       <div className="items" aria-live="polite">{names.length ? names.map((name) => {
@@ -239,6 +341,23 @@ function App() {
           <CatalogSection title={`Fluid recipes (${catalog.fluidRecipes?.length || 0})`} entries={catalog.fluidRecipes || []} format={(recipe) => `${recipe.name}: ${recipe.ingredients.map(materialText).join(' + ') || 'no inputs'} → ${recipe.outputs.map(materialText).join(' + ')}; machines ${recipe.compatibleMachines.join(', ') || 'none'}`} />
         </div>
       </details>
+      {profileEditorOpen && <div className="profile-modal-backdrop" onClick={() => setProfileEditorOpen(false)}>
+        <div className="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title" onClick={(event) => event.stopPropagation()}>
+          <h2 id="profile-dialog-title">{profileDraft.id ? 'Edit profile' : 'Create profile'}</h2>
+          <label htmlFor="profile-name">Name</label>
+          <input id="profile-name" type="text" value={profileDraft.name} onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} />
+          <label htmlFor="profile-footprint">Maximum footprint</label>
+          <input id="profile-footprint" type="number" min="0" step="0.1" value={profileDraft.maxFootprint} onChange={(event) => setProfileDraft({ ...profileDraft, maxFootprint: event.target.value })} placeholder="Optional" />
+          <label htmlFor="profile-io">Maximum combined IO</label>
+          <input id="profile-io" type="number" min="0" step="1" value={profileDraft.maxIO} onChange={(event) => setProfileDraft({ ...profileDraft, maxIO: event.target.value })} placeholder="Optional" />
+          {profileError && <p className="error inline-error">{profileError}</p>}
+          <div className="profile-modal-actions">
+            {profileDraft.id && <button type="button" className="danger" onClick={() => { deleteSelectedProfile(profiles.find((profile) => profile.id === profileDraft.id)); setProfileEditorOpen(false); }}>Delete</button>}
+            <button type="button" onClick={() => setProfileEditorOpen(false)}>Cancel</button>
+            <button type="button" className="primary" onClick={saveProfile}>Save</button>
+          </div>
+        </div>
+      </div>}
     </>;
   }
 

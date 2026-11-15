@@ -28,6 +28,110 @@ export function assertProfile(profile) {
   return profile;
 }
 
+export function normalizeProfile(profile) {
+  const next = {
+    ...profile,
+    id: typeof profile?.id === 'string' && profile.id.trim() ? profile.id : createStableId(),
+    name: typeof profile?.name === 'string' ? profile.name.trim() : '',
+    maxFootprint: profile?.maxFootprint === undefined || profile?.maxFootprint === null ? null : Number(profile.maxFootprint),
+    maxIO: profile?.maxIO === undefined || profile?.maxIO === null ? null : Number(profile.maxIO),
+  };
+  if (!next.name) {
+    throw new TypeError('A profile requires a stable ID and a non-empty name.');
+  }
+  assertOptionalLimit(next.maxFootprint, 'maxFootprint');
+  assertOptionalLimit(next.maxIO, 'maxIO', true);
+  return next;
+}
+
+export function createProfile(overrides = {}) {
+  return normalizeProfile({ id: createStableId(), name: 'New profile', ...overrides });
+}
+
+export function updateProfile(profile, updates = {}) {
+  return normalizeProfile({ ...(profile || {}), ...updates });
+}
+
+export function deleteProfile(profiles, profileId) {
+  return (Array.isArray(profiles) ? profiles : []).filter((profile) => profile?.id !== profileId);
+}
+
+export function profileDensityRating(density, occupiedFootprint = null, maxFootprint = null) {
+  if (!Number.isFinite(density) || density === null || density === undefined) return 'None';
+  if (occupiedFootprint !== null && maxFootprint !== null && Number.isFinite(occupiedFootprint) && Number.isFinite(maxFootprint) && occupiedFootprint * 1.5 > maxFootprint) {
+    return 'Unrealistic';
+  }
+  if (density <= 0.3) return 'Normal';
+  if (density <= 0.4) return 'Uncommon';
+  if (density <= 0.5) return 'Rare';
+  if (density <= 0.575) return 'Epic';
+  if (density <= 2 / 3) return 'Legendary';
+  return 'Unrealistic';
+}
+
+export function calculateProfileDensity(profile, occupiedFootprint) {
+  const footprint = Number(occupiedFootprint ?? 0);
+  if (!profile || profile.maxFootprint === null || profile.maxFootprint === undefined) {
+    return { density: null, ratio: null, rating: 'None', maxFootprint: null, occupiedFootprint: footprint, overage: false };
+  }
+  const maxFootprint = Number(profile.maxFootprint);
+  if (!Number.isFinite(maxFootprint) || maxFootprint < 0) {
+    throw new TypeError('maxFootprint must be a finite non-negative number or null.');
+  }
+  const density = maxFootprint === 0 ? (footprint > 0 ? Number.POSITIVE_INFINITY : 0) : footprint / maxFootprint;
+  return {
+    density,
+    ratio: density,
+    rating: profileDensityRating(density, footprint, maxFootprint),
+    maxFootprint,
+    occupiedFootprint: footprint,
+    overage: maxFootprint > 0 ? footprint > maxFootprint : footprint > 0,
+  };
+}
+
+export function countDistinctMaterialConnections(inputs = [], outputs = []) {
+  const inputKeys = new Set();
+  const outputKeys = new Set();
+  for (const material of Array.isArray(inputs) ? inputs : []) {
+    const normalized = normalizeMaterialRef(material);
+    inputKeys.add(materialKey(normalized));
+  }
+  for (const material of Array.isArray(outputs) ? outputs : []) {
+    const normalized = normalizeMaterialRef(material);
+    outputKeys.add(materialKey(normalized));
+  }
+  return {
+    inputCount: inputKeys.size,
+    outputCount: outputKeys.size,
+    total: inputKeys.size + outputKeys.size,
+    inputKeys: [...inputKeys],
+    outputKeys: [...outputKeys],
+  };
+}
+
+export function calculateProfileIO(profile, inputs = [], outputs = []) {
+  const counts = countDistinctMaterialConnections(inputs, outputs);
+  const limit = profile && profile.maxIO !== null && profile.maxIO !== undefined ? Number(profile.maxIO) : null;
+  const overage = limit !== null && Number.isFinite(limit) ? counts.total > limit : false;
+  return {
+    ...counts,
+    limit,
+    overage,
+  };
+}
+
+export function getProfileSummary(profile) {
+  if (!profile) return 'None';
+  const constraints = [];
+  if (profile.maxFootprint !== null && profile.maxFootprint !== undefined) {
+    constraints.push(`footprint ${profile.maxFootprint}`);
+  }
+  if (profile.maxIO !== null && profile.maxIO !== undefined) {
+    constraints.push(`IO ${profile.maxIO}`);
+  }
+  return constraints.length ? `${profile.name} (${constraints.join(', ')})` : profile.name;
+}
+
 export function normalizeMaterialRef(material) {
   if (!material || !['item', 'fluid'].includes(material.type) || typeof material.name !== 'string' || !material.name.trim()) {
     throw new TypeError('A material requires type "item" or "fluid" and a non-empty name.');
