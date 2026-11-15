@@ -14,6 +14,7 @@ An unset optional limit is JSON `null` and means unlimited. Numeric `0` is a con
 Profile = {
   id: string,                    // stable UUID
   name: string,
+  surface: string | null,        // stable surface ID; null means unrestricted
   maxFootprint: number | null,
   maxIO: number | null
 }

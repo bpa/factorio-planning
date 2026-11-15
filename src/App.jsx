@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import {
   CRAFTING_STORAGE_KEY,
   calculateProfileDensity,
+  createMall,
   createProfile,
   datasetStorageKey,
   deleteProfile,
   getProfileSummary,
+  normalizeMall,
   normalizeProfile,
+  rankGoalSuggestions,
   updateProfile,
 } from './planner.js';
 
@@ -86,6 +89,10 @@ function App() {
   const [levels, setLevels] = useState(1);
   const [filter, setFilter] = useState('all');
   const [assignments, setAssignments] = useState({});
+  const [malls, setMalls] = useState([]);
+  const [activeMallId, setActiveMallId] = useState(null);
+  const [newMallName, setNewMallName] = useState('');
+  const [mallNameDraft, setMallNameDraft] = useState('');
   const [profiles, setProfiles] = useState([]);
   const [activeProfileId, setActiveProfileId] = useState(null);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
@@ -111,22 +118,48 @@ function App() {
       const saved = localStorage.getItem(datasetStorageKey(mod))
         || (mod === 'space-age' ? localStorage.getItem(CRAFTING_STORAGE_KEY) : null);
       const parsed = saved ? JSON.parse(saved) : {};
-      const state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && ('assignments' in parsed || 'profiles' in parsed || 'activeProfileId' in parsed)
+      const state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && ('assignments' in parsed || 'profiles' in parsed || 'activeProfileId' in parsed || 'malls' in parsed || 'activeMallId' in parsed)
         ? parsed
         : { assignments: parsed || {}, profiles: [], activeProfileId: null };
-      setAssignments(state.assignments || {});
+      const restoredAssignments = state.assignments || {};
+      let restoredMalls = Array.isArray(state.malls) ? state.malls.map(normalizeMall) : [];
+      if (!restoredMalls.length) {
+        const legacyGoals = Object.entries(restoredAssignments)
+          .filter(([, assignment]) => assignment === 'mall')
+          .map(([name]) => ({ material: { type: 'item', name }, targetRate: 1 }));
+        if (legacyGoals.length) {
+          restoredMalls = [createMall('Mall', { profileId: state.activeProfileId || null, goals: legacyGoals })];
+        }
+      }
+      const selectedMall = restoredMalls.find((mall) => mall.id === state.activeMallId) || restoredMalls[0] || null;
+      setAssignments(restoredAssignments);
+      setMalls(restoredMalls);
+      setActiveMallId(selectedMall?.id || null);
       setProfiles(Array.isArray(state.profiles) ? state.profiles : []);
-      setActiveProfileId(typeof state.activeProfileId === 'string' ? state.activeProfileId : null);
+      setActiveProfileId(selectedMall ? selectedMall.profileId : (typeof state.activeProfileId === 'string' ? state.activeProfileId : null));
     } catch {
       setAssignments({});
+      setMalls([]);
+      setActiveMallId(null);
       setProfiles([]);
       setActiveProfileId(null);
     }
   }, [mod]);
 
-  function persistDatasetState(nextAssignments, nextProfiles = profiles, nextActiveProfileId = activeProfileId) {
+  useEffect(() => {
+    setMallNameDraft(malls.find((mall) => mall.id === activeMallId)?.name || '');
+  }, [activeMallId, malls]);
+
+  function persistDatasetState(nextAssignments = assignments, nextProfiles = profiles, nextActiveProfileId = activeProfileId, nextMalls = malls, nextActiveMallId = activeMallId) {
     try {
-      const payload = { version: 1, assignments: nextAssignments || {}, profiles: nextProfiles || [], activeProfileId: nextActiveProfileId || null };
+      const payload = {
+        version: 1,
+        assignments: nextAssignments || {},
+        profiles: nextProfiles || [],
+        activeProfileId: nextActiveProfileId || null,
+        malls: nextMalls || [],
+        activeMallId: nextActiveMallId || null,
+      };
       localStorage.setItem(datasetStorageKey(mod), JSON.stringify(payload));
     } catch {
       // Storage can be disabled.
@@ -138,7 +171,77 @@ function App() {
   const items = crafting?.datasets[mod] || {};
   const labels = crafting?.labels[mod] || {};
   const catalog = crafting?.catalogs[mod] || {};
+  const activeMall = malls.find((mall) => mall.id === activeMallId) || null;
   const itemName = (name, type = 'item') => (type === 'fluid' ? catalog.fluidLabels?.[name] : labels[name]) || name;
+
+  function persistMalls(nextMalls, nextActiveMallId = activeMallId) {
+    const nextActiveMall = nextMalls.find((mall) => mall.id === nextActiveMallId) || null;
+    const nextActiveProfileId = nextActiveMall ? nextActiveMall.profileId : activeProfileId;
+    setMalls(nextMalls);
+    setActiveMallId(nextActiveMallId);
+    if (nextActiveMall) setActiveProfileId(nextActiveProfileId);
+    persistDatasetState(assignments, profiles, nextActiveProfileId, nextMalls, nextActiveMallId);
+  }
+
+  function updateActiveMall(updates) {
+    if (!activeMall) return;
+    persistMalls(malls.map((mall) => mall.id === activeMall.id ? normalizeMall({ ...mall, ...updates }) : mall));
+  }
+
+  function addMall() {
+    const name = newMallName.trim();
+    if (!name) return;
+    const mall = createMall(name, { profileId: activeProfileId });
+    setNewMallName('');
+    persistMalls([...malls, mall], mall.id);
+  }
+
+  function selectMall(mallId) {
+    const selectedMall = malls.find((mall) => mall.id === mallId) || null;
+    setActiveMallId(selectedMall?.id || null);
+    const nextActiveProfileId = selectedMall?.profileId || null;
+    setActiveProfileId(nextActiveProfileId);
+    persistDatasetState(assignments, profiles, nextActiveProfileId, malls, selectedMall?.id || null);
+  }
+
+  function saveMallName() {
+    const name = mallNameDraft.trim();
+    if (!name || !activeMall) return;
+    updateActiveMall({ name });
+  }
+
+  function deleteActiveMall() {
+    if (!activeMall || !window.confirm(`Delete mall “${activeMall.name}”? Its goals and inputs will be removed.`)) return;
+    const remaining = malls.filter((mall) => mall.id !== activeMall.id);
+    persistMalls(remaining, remaining[0]?.id || null);
+  }
+
+  function toggleMallGoal(name) {
+    if (!activeMall) return;
+    const exists = activeMall.goals.some((goal) => goal.material.type === 'item' && goal.material.name === name);
+    const goals = exists
+      ? activeMall.goals.filter((goal) => !(goal.material.type === 'item' && goal.material.name === name))
+      : [...activeMall.goals, { material: { type: 'item', name }, targetRate: 1 }];
+    updateActiveMall({ goals });
+  }
+
+  function setGoalTarget(name, value) {
+    if (!activeMall) return;
+    const targetRate = Number(value);
+    if (!Number.isFinite(targetRate) || targetRate < 0) return;
+    updateActiveMall({
+      goals: activeMall.goals.map((goal) => goal.material.type === 'item' && goal.material.name === name ? { ...goal, targetRate } : goal),
+    });
+  }
+
+  function toggleMallInput(name) {
+    if (!activeMall) return;
+    const exists = activeMall.inputs.some((material) => material.type === 'item' && material.name === name);
+    const inputs = exists
+      ? activeMall.inputs.filter((material) => !(material.type === 'item' && material.name === name))
+      : [...activeMall.inputs, { type: 'item', name }];
+    updateActiveMall({ inputs });
+  }
 
   function changeMod(next) {
     setMod(next);
@@ -188,21 +291,28 @@ function App() {
       maxIO: maxIOValue,
     });
     const nextProfiles = [...profiles.filter((profile) => profile.id !== normalized.id), normalized].sort((left, right) => left.name.localeCompare(right.name));
+    const nextActiveProfileId = profileDraft.id ? activeProfileId : normalized.id;
+    const nextMalls = !profileDraft.id && activeMall
+      ? malls.map((mall) => mall.id === activeMall.id ? { ...mall, profileId: normalized.id } : mall)
+      : malls;
     setProfiles(nextProfiles);
-    setActiveProfileId((current) => (profileDraft.id ? current : normalized.id));
+    setMalls(nextMalls);
+    setActiveProfileId(nextActiveProfileId);
     setProfileEditorOpen(false);
-    persistDatasetState(assignments, nextProfiles, profileDraft.id ? activeProfileId || normalized.id : normalized.id);
+    persistDatasetState(assignments, nextProfiles, nextActiveProfileId, nextMalls, activeMallId);
   }
 
   function deleteSelectedProfile(profile) {
     if (!profile) return;
-    const existingReferences = Object.values(assignments).some((value) => value === profile.id);
+    const existingReferences = malls.some((mall) => mall.profileId === profile.id) || Object.values(assignments).some((value) => value === profile.id);
     const confirmMessage = existingReferences ? `Delete profile “${profile.name}”? It will be removed from linked assignments.` : `Delete profile “${profile.name}”?`;
     if (!window.confirm(confirmMessage)) return;
     const nextProfiles = deleteProfile(profiles, profile.id);
+    const nextMalls = malls.map((mall) => mall.profileId === profile.id ? { ...mall, profileId: null } : mall);
     setProfiles(nextProfiles);
+    setMalls(nextMalls);
     if (activeProfileId === profile.id) setActiveProfileId(null);
-    persistDatasetState(assignments, nextProfiles, activeProfileId === profile.id ? null : activeProfileId);
+    persistDatasetState(assignments, nextProfiles, activeProfileId === profile.id ? null : activeProfileId, nextMalls, activeMallId);
   }
 
   function getTechnologyPlan() {
@@ -268,11 +378,15 @@ function App() {
 
   function renderCrafting() {
     const query = search.trim().toLocaleLowerCase();
-    const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || null;
+    const selectedProfileId = activeMall ? activeMall.profileId : activeProfileId;
+    const activeProfile = profiles.find((profile) => profile.id === selectedProfileId) || null;
     const density = activeProfile ? calculateProfileDensity(activeProfile, 0) : { density: null, ratio: null, rating: 'None' };
+    const mallItemNames = new Set(malls.flatMap((mall) => mall.goals.map((goal) => goal.material.name)));
+    const goalSuggestions = activeMall ? rankGoalSuggestions({ items, goals: activeMall.goals, inputs: activeMall.inputs, limit: 5 }) : [];
     const names = Object.keys(items).filter((name) => items[name].recipes.some((recipe) => recipe.available)
       && (!query || itemName(name).toLocaleLowerCase().includes(query) || name.toLowerCase().includes(query)))
-      .filter((name) => filter === 'all' || (filter === 'unassigned' ? !assignments[name] : assignments[name] === filter))
+      .filter((name) => filter === 'all'
+        || (filter === 'unassigned' ? !mallItemNames.has(name) && assignments[name] !== 'manual' : filter === 'mall' ? mallItemNames.has(name) : assignments[name] === 'manual'))
       .sort((left, right) => itemName(left).localeCompare(itemName(right)));
     const materialText = (material) => {
       const amount = material.amountMin === material.amountMax ? material.amountMin : `${material.amountMin}-${material.amountMax}`;
@@ -291,10 +405,14 @@ function App() {
         <div className="profile-controls">
           <label htmlFor="profile-select">Profile</label>
           <div className="profile-row">
-            <select id="profile-select" value={activeProfileId || 'none'} onChange={(event) => {
+            <select id="profile-select" value={selectedProfileId || 'none'} onChange={(event) => {
               const nextProfileId = event.target.value === 'none' ? null : event.target.value;
-              setActiveProfileId(nextProfileId);
-              persistDatasetState(assignments, profiles, nextProfileId);
+              if (activeMall) {
+                persistMalls(malls.map((mall) => mall.id === activeMall.id ? { ...mall, profileId: nextProfileId } : mall));
+              } else {
+                setActiveProfileId(nextProfileId);
+                persistDatasetState(assignments, profiles, nextProfileId);
+              }
             }}>
               <option value="none">None</option>
               {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
@@ -302,13 +420,72 @@ function App() {
             <button type="button" className="profile-button" onClick={() => openProfileEditor()}>Manage Profiles</button>
           </div>
         </div>
-        <div className="segmented" role="group" aria-label="Show items">{[['all', 'All'], ['unassigned', 'Unsorted'], ['mall', 'Mall'], ['manual', 'Manual']].map(([value, title]) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{title}</button>)}</div>
+        <div className="segmented" role="group" aria-label="Show items">{[['all', 'All'], ['unassigned', 'Unsorted'], ['mall', 'In malls'], ['manual', 'Manual']].map(([value, title]) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{title}</button>)}</div>
       </div>
+      <section className="mall-workspace" aria-label="Mall planning">
+        <div className="mall-toolbar">
+          <div>
+            <label htmlFor="active-mall">Active mall</label>
+            <select id="active-mall" value={activeMallId || ''} onChange={(event) => selectMall(event.target.value)}>
+              <option value="">No mall selected</option>
+              {malls.map((mall) => <option key={mall.id} value={mall.id}>{mall.name}</option>)}
+            </select>
+          </div>
+          <form className="new-mall-form" onSubmit={(event) => { event.preventDefault(); addMall(); }}>
+            <label htmlFor="new-mall-name">Create mall</label>
+            <div className="mall-inline-control">
+              <input id="new-mall-name" value={newMallName} onChange={(event) => setNewMallName(event.target.value)} placeholder="Mall name" />
+              <button type="submit" className="profile-button">Create</button>
+            </div>
+          </form>
+        </div>
+        {activeMall ? <>
+          <div className="mall-settings">
+            <form className="mall-rename-form" onSubmit={(event) => { event.preventDefault(); saveMallName(); }}>
+              <label htmlFor="mall-name">Name</label>
+              <div className="mall-inline-control">
+                <input id="mall-name" value={mallNameDraft} onChange={(event) => setMallNameDraft(event.target.value)} />
+                <button type="submit" className="profile-button">Save name</button>
+              </div>
+            </form>
+            <div>
+              <label htmlFor="mall-status">Status</label>
+              <select id="mall-status" value={activeMall.status} onChange={(event) => updateActiveMall({ status: event.target.value })}>
+                <option value="planned">Planned</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+            <button type="button" className="danger mall-delete" onClick={deleteActiveMall}>Delete mall</button>
+          </div>
+          <div className="mall-columns">
+            <section className="mall-block" aria-label="Mall goals">
+              <h2>Goals</h2>
+              {activeMall.goals.length ? <ul className="mall-material-list">{activeMall.goals.map((goal) => <li key={`${goal.material.type}:${goal.material.name}`}>
+                <span>{itemName(goal.material.name, goal.material.type)}</span>
+                <label>Target/min <input type="number" min="0" step="any" aria-label={`${itemName(goal.material.name, goal.material.type)} target per minute`} value={goal.targetRate} onChange={(event) => setGoalTarget(goal.material.name, event.target.value)} /></label>
+                <button type="button" className="choice" aria-label={`Remove ${itemName(goal.material.name, goal.material.type)} goal`} onClick={() => toggleMallGoal(goal.material.name)}>Remove</button>
+              </li>)}</ul> : <p className="empty">Add a goal from the item list or suggestions.</p>}
+              <h3>Suggested goals</h3>
+              {goalSuggestions.length ? <ul className="suggestion-list" aria-label="Ranked goal suggestions">{goalSuggestions.map((suggestion) => <li key={suggestion.material.name}>
+                <span>{itemName(suggestion.material.name)}<small>{suggestion.sharedInputs.length ? `Shares ${suggestion.sharedInputs.map((material) => itemName(material.name, material.type)).join(', ')}` : 'No shared inputs'}</small></span>
+                <button type="button" className="choice" aria-label={`Add ${itemName(suggestion.material.name)} goal`} onClick={() => toggleMallGoal(suggestion.material.name)}>Add</button>
+              </li>)}</ul> : <p className="empty">No goal suggestions available.</p>}
+            </section>
+            <section className="mall-block" aria-label="External inputs">
+              <h2>External inputs</h2>
+              {activeMall.inputs.length ? <ul className="mall-material-list">{activeMall.inputs.map((material) => <li key={`${material.type}:${material.name}`}>
+                <span>{itemName(material.name, material.type)}</span>
+                <button type="button" className="choice" aria-label={`Remove ${itemName(material.name, material.type)} input`} onClick={() => toggleMallInput(material.name)}>Remove</button>
+              </li>)}</ul> : <p className="empty">Promote any item from the list to an external input.</p>}
+            </section>
+          </div>
+        </> : <p className="empty mall-empty">Create a mall to add goals and external inputs.</p>}
+      </section>
       <div className="profile-summary-wrap">
         <div className="summary-card compact"><strong>{activeProfile ? getProfileSummary(activeProfile) : 'None'}</strong><span>Active profile</span></div>
         <div className="summary-card compact"><strong>{density.rating}</strong><span>Density {density.density === null ? 'None' : `${density.density.toFixed(2)} / ${activeProfile?.maxFootprint ?? '∞'}`}</span></div>
       </div>
-      <div className="craft-counts"><span><strong>{Object.values(assignments).filter((value) => value === 'mall').length}</strong> mall</span><span><strong>{Object.values(assignments).filter((value) => value === 'manual').length}</strong> manual</span></div>
+      <div className="craft-counts"><span><strong>{mallItemNames.size}</strong> mall goals</span><span><strong>{Object.values(assignments).filter((value) => value === 'manual').length}</strong> manual</span></div>
       <div className="items" aria-live="polite">{names.length ? names.map((name) => {
         const node = items[name];
         return <article className="item-row" key={name}>
@@ -329,7 +506,11 @@ function App() {
               </div>
             </details>;
           })}</div>
-          <div className="item-actions">{[['mall', 'Mall'], ['manual', 'Build as needed']].map(([state, title]) => <button className="choice" data-state={assignments[name] === state ? state : ''} aria-pressed={assignments[name] === state} key={state} onClick={() => updateAssignment(name, state)}>{title}</button>)}</div>
+          <div className="item-actions">
+            <button className="choice" data-state={activeMall?.goals.some((goal) => goal.material.type === 'item' && goal.material.name === name) ? 'mall' : ''} aria-pressed={activeMall?.goals.some((goal) => goal.material.type === 'item' && goal.material.name === name) || false} aria-label={`${activeMall?.goals.some((goal) => goal.material.type === 'item' && goal.material.name === name) ? 'Remove' : 'Add'} ${itemName(name)} goal`} disabled={!activeMall} onClick={() => toggleMallGoal(name)}>{activeMall?.goals.some((goal) => goal.material.type === 'item' && goal.material.name === name) ? 'Remove goal' : 'Add goal'}</button>
+            <button className="choice" data-state={activeMall?.inputs.some((material) => material.type === 'item' && material.name === name) ? 'input' : ''} aria-pressed={activeMall?.inputs.some((material) => material.type === 'item' && material.name === name) || false} aria-label={`${activeMall?.inputs.some((material) => material.type === 'item' && material.name === name) ? 'Remove' : 'Add'} ${itemName(name)} input`} disabled={!activeMall} onClick={() => toggleMallInput(name)}>{activeMall?.inputs.some((material) => material.type === 'item' && material.name === name) ? 'Remove input' : 'Add input'}</button>
+            <button className="choice" data-state={assignments[name] === 'manual' ? 'manual' : ''} aria-pressed={assignments[name] === 'manual'} onClick={() => updateAssignment(name, 'manual')}>Build as needed</button>
+          </div>
         </article>;
       }) : <p className="empty">No matching craftable items.</p>}</div>
       <details className="catalog">

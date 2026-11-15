@@ -156,6 +156,60 @@ export function normalizeGoal(goal) {
   return { material, targetRate };
 }
 
+export function normalizeMall(mall = {}) {
+  const name = typeof mall.name === 'string' ? mall.name.trim() : '';
+  if (!name) throw new TypeError('A mall requires a non-empty name.');
+  return {
+    id: typeof mall.id === 'string' && mall.id.trim() ? mall.id : createStableId(),
+    name,
+    status: mall.status === 'completed' ? 'completed' : 'planned',
+    profileId: typeof mall.profileId === 'string' ? mall.profileId : null,
+    goals: Array.isArray(mall.goals) ? mall.goals.map(normalizeGoal) : [],
+    inputs: uniqueMaterials(Array.isArray(mall.inputs) ? mall.inputs.map(normalizeMaterialRef) : []),
+    productionNodes: Array.isArray(mall.productionNodes) ? mall.productionNodes.map(normalizeProductionNode) : [],
+    beaconNodes: Array.isArray(mall.beaconNodes) ? mall.beaconNodes : [],
+  };
+}
+
+export function createMall(name = 'New mall', overrides = {}) {
+  return normalizeMall({ id: createStableId(), name, ...overrides });
+}
+
+export function rankGoalSuggestions({ items = {}, goals = [], inputs = [], limit = 6 } = {}) {
+  const goalKeys = new Set(goals.map((goal) => materialKey(goal.material || goal)));
+  const sharedKeys = new Set(inputs.map(materialKey));
+  for (const goal of goals) {
+    const goalName = (goal.material || goal).name;
+    for (const recipe of items[goalName]?.recipes || []) {
+      for (const ingredient of recipe.ingredients || []) sharedKeys.add(materialKey(ingredient));
+    }
+  }
+
+  const suggestions = [];
+  for (const [name, item] of Object.entries(items)) {
+    const material = { type: 'item', name };
+    if (goalKeys.has(materialKey(material))) continue;
+    const recipes = (item.recipes || []).filter((recipe) => recipe.available);
+    if (!recipes.length) continue;
+    const candidates = recipes.map((recipe) => {
+      const ingredients = [...new Map((recipe.ingredients || []).map((ingredient) => {
+        const materialRef = normalizeMaterialRef({ type: ingredient.type || 'item', name: ingredient.name });
+        return [materialKey(materialRef), materialRef];
+      })).values()];
+      const sharedInputs = ingredients.filter((ingredient) => sharedKeys.has(materialKey(ingredient)));
+      return {
+        material,
+        sharedInputs,
+        newInputs: ingredients.filter((ingredient) => !sharedKeys.has(materialKey(ingredient))),
+        score: sharedInputs.length * 25 - ingredients.filter((ingredient) => !sharedKeys.has(materialKey(ingredient))).length * 5,
+      };
+    }).sort((left, right) => right.score - left.score || left.newInputs.length - right.newInputs.length);
+    suggestions.push(candidates[0]);
+  }
+
+  return suggestions.sort((left, right) => right.score - left.score || left.material.name.localeCompare(right.material.name)).slice(0, Math.max(0, limit));
+}
+
 export function normalizeProductionNode(node) {
   const recipeName = typeof node?.recipeName === 'string' && node.recipeName ? node.recipeName : (typeof node?.name === 'string' ? node.name : 'unnamed-recipe');
   const normalized = {

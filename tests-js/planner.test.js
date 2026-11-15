@@ -12,11 +12,13 @@ import {
   calculateProfileDensity,
   calculateProfileIO,
   createProfile,
+  createMall,
   createStableId,
   datasetStorageKey,
   deleteProfile,
   materialKey,
   promoteMaterialToInput,
+  rankGoalSuggestions,
   recommendProductionOptions,
   solveMallProduction,
   updateProfile,
@@ -48,6 +50,34 @@ test('stable IDs are unique UUIDs and remain unchanged when serialized', () => {
   assert.notEqual(profile.id, mall.id);
   profile.name = 'Updated name';
   assert.equal(JSON.parse(JSON.stringify(profile)).id, profile.id);
+});
+
+test('named malls normalize stable identity, status, goals, and unique inputs', () => {
+  const mall = createMall('Science', {
+    goals: [{ material: { type: 'item', name: 'automation-science-pack' }, targetRate: 60 }],
+    inputs: [{ type: 'item', name: 'iron-plate' }, { type: 'item', name: 'iron-plate' }],
+  });
+  assert.match(mall.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.equal(mall.name, 'Science');
+  assert.equal(mall.status, 'planned');
+  assert.equal(mall.goals[0].targetRate, 60);
+  assert.deepEqual(mall.inputs, [{ type: 'item', name: 'iron-plate' }]);
+  assert.throws(() => createMall('   '), TypeError);
+});
+
+test('goal suggestions rank products that share current inputs first', () => {
+  const suggestions = rankGoalSuggestions({
+    items: {
+      'copper-cable': { recipes: [{ available: true, ingredients: [{ type: 'item', name: 'copper-plate' }] }] },
+      'steel-plate': { recipes: [{ available: true, ingredients: [{ type: 'item', name: 'iron-plate' }, { type: 'item', name: 'coal' }] }] },
+      'unavailable-item': { recipes: [{ available: false, ingredients: [{ type: 'item', name: 'iron-plate' }] }] },
+    },
+    goals: [],
+    inputs: [{ type: 'item', name: 'iron-plate' }],
+  });
+  assert.equal(suggestions[0].material.name, 'steel-plate');
+  assert.deepEqual(suggestions[0].sharedInputs, [{ type: 'item', name: 'iron-plate' }]);
+  assert.equal(suggestions.some((entry) => entry.material.name === 'unavailable-item'), false);
 });
 
 test('material identity includes the item or fluid type', () => {
