@@ -70,6 +70,8 @@ Run parser and JSON contract tests:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+Run JavaScript planner contract tests with `npm test`. Browser smoke tests use Playwright; install Chromium once with `npx playwright install chromium`, then run `npm run test:e2e`.
+
 The suite includes required integration tests against the configured Factorio data directory. They fail when the data directory is unavailable; set `FACTORIO_DATA` when the installation is not at the default path. The Python generator should report Base and Space Age technology/item counts and create both JSON files. Run `npm ci` and `npm run build` to create the ignored Pages output.
 
 For a UI smoke check, run `npm run dev` and verify:

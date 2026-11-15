@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
+import { CRAFTING_STORAGE_KEY, datasetStorageKey } from './planner.js';
 
 const DATA_URL = `${import.meta.env.BASE_URL}data/`;
-const STORAGE_KEY = 'factorio-crafting-mall-v1';
 const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 
 function parseFormula(formula, level) {
@@ -94,8 +94,8 @@ function App() {
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(`${STORAGE_KEY}:${mod}`)
-        || (mod === 'space-age' ? localStorage.getItem(STORAGE_KEY) : null);
+      const saved = localStorage.getItem(datasetStorageKey(mod))
+        || (mod === 'space-age' ? localStorage.getItem(CRAFTING_STORAGE_KEY) : null);
       setAssignments(JSON.parse(saved || '{}') || {});
     } catch {
       setAssignments({});
@@ -120,7 +120,7 @@ function App() {
     if (next[name] === state) delete next[name];
     else next[name] = state;
     setAssignments(next);
-    try { localStorage.setItem(`${STORAGE_KEY}:${mod}`, JSON.stringify(next)); } catch { /* Storage can be disabled. */ }
+    try { localStorage.setItem(datasetStorageKey(mod), JSON.stringify(next)); } catch { /* Storage can be disabled. */ }
   }
 
   function getTechnologyPlan() {

@@ -6,11 +6,13 @@ This plan keeps the standalone-page design and builds capabilities in dependency
 
 Implement these as small, reviewable increments. Each step adds one usable capability and must pass its listed checks before the next step starts. The sections below remain the detailed behavior specification; resolve any implementation ambiguity against them. Keep fixtures deterministic so tests do not depend on the installed Factorio version. Use the existing Python `unittest` suite for readers and payloads, add a JavaScript unit-test runner for planner logic, and add browser automation for UI workflows. Keep installed-data integration tests as a separate validation layer.
 
-### Step 1: Establish testable planner boundaries
+### Step 1: Establish testable planner boundaries (implemented)
 
 **Feature:** Create a test harness for pure planner functions and browser workflows, and define the serialized domain contracts for profiles, malls, materials, recipes, and production nodes. Keep planner calculations outside React components so they can be tested without rendering the page.
 
 **Verify:** `npm test` runs a passing JavaScript unit-test smoke test; `npm run test:e2e` opens the current app in the browser; `python -m unittest discover -s tests -v` still passes. Add contract tests for optional limits (`None` versus `0`), stable IDs, item/fluid material identity, and per-dataset state keys.
+
+**Foundation added:** `src/planner.js` holds React-independent ID, profile-limit, material-identity, and dataset-key helpers. `docs/planner-domain.md` defines the persisted profile, mall, goal, production-node, beacon-node, material, and catalog-recipe shapes for subsequent steps. Node's built-in test runner covers the shared semantics; Playwright opens the Vite app and exercises its current view and dataset switches. The existing crafting assignment store now uses the shared dataset-key helper while retaining its legacy Space Age fallback.
 
 ### Step 2: Extract complete recipe and item metadata
 

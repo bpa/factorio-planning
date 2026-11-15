@@ -21,6 +21,8 @@ Run the parsers and JSON contract tests with:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+Run the JavaScript planner contracts with `npm test`. The browser smoke test uses Playwright; install its Chromium runtime once with `npx playwright install chromium`, then run `npm run test:e2e`.
+
 Build the static site into `pages/` with `npm run build`. To publish, configure repository Settings > Pages > Build and deployment > Source as **GitHub Actions**. The workflow builds from the committed JSON and deploys `pages/`; GitHub Pages does not automatically run this React/Vite build when a branch folder is selected.
 
 ## Data Sets
