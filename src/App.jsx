@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import '@xyflow/react/dist/style.css';
+import { Background, Controls, Handle, Position, ReactFlow } from '@xyflow/react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CRAFTING_STORAGE_KEY,
   calculateProfileDensity,
@@ -8,8 +10,11 @@ import {
   deleteProfile,
   getProfileSummary,
   normalizeMall,
+  normalizeMaterialRef,
   normalizeProfile,
+  normalizeProductionNode,
   rankGoalSuggestions,
+  recommendProductionOptions,
   updateProfile,
 } from './planner.js';
 
@@ -79,6 +84,29 @@ function technologyCount(technology, levels) {
   return typeof technology.maxLevel === 'number' ? technology.count * technology.maxLevel : technology.count;
 }
 
+function ProductionNodeCard({ data }) {
+  return <div className={`graph-node ${data?.selected ? 'selected' : ''}`}>
+    <Handle type="target" position={Position.Left} />
+    <div className="graph-node-header">{data?.label || 'Recipe'}</div>
+    <div className="graph-node-body">{data?.subtitle || 'Machine'}</div>
+    <Handle type="source" position={Position.Right} />
+  </div>;
+}
+
+function MaterialNodeCard({ data }) {
+  return <div className={`graph-node material-node ${data?.selected ? 'selected' : ''}`}>
+    <Handle type="target" position={Position.Left} />
+    <div className="graph-node-header">{data?.label || 'Material'}</div>
+    <div className="graph-node-body">{data?.kind || 'material'} · {data?.subtitle || 'item'}</div>
+    <Handle type="source" position={Position.Right} />
+  </div>;
+}
+
+const productionNodeTypes = {
+  production: ProductionNodeCard,
+  material: MaterialNodeCard,
+};
+
 function App() {
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -98,6 +126,8 @@ function App() {
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState({ id: null, name: '', maxFootprint: '', maxIO: '' });
   const [profileError, setProfileError] = useState('');
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState(null);
+  const [graphDraft, setGraphDraft] = useState({ recipeName: '', machineName: '', modules: [] });
 
   useEffect(() => {
     Promise.all([
@@ -376,6 +406,169 @@ function App() {
     </div>;
   }
 
+  const recipeCatalog = useMemo(() => Object.values(items || {}).flatMap((item) => (item.recipes || []).filter((recipe) => recipe.available).map((recipe) => ({ ...recipe, itemName: item.name }))), [items]);
+  const machineCatalog = useMemo(() => catalog?.machines || [], [catalog]);
+
+  useEffect(() => {
+    if (!activeMall) {
+      setSelectedGraphNodeId(null);
+      setGraphDraft({ recipeName: '', machineName: '', modules: [] });
+      return;
+    }
+    if (!selectedGraphNodeId || !activeMall.productionNodes.some((node) => node.id === selectedGraphNodeId)) {
+      setSelectedGraphNodeId(activeMall.productionNodes[0]?.id || null);
+    }
+  }, [activeMall, selectedGraphNodeId]);
+
+  useEffect(() => {
+    const selectedNode = activeMall?.productionNodes.find((node) => node.id === selectedGraphNodeId) || null;
+    if (!selectedNode) {
+      setGraphDraft({ recipeName: '', machineName: '', modules: [] });
+      return;
+    }
+    setGraphDraft({
+      recipeName: selectedNode.recipeName || '',
+      machineName: selectedNode.machineName || '',
+      modules: Array.isArray(selectedNode.modules) ? selectedNode.modules.map((module) => ({ ...module })) : [],
+    });
+  }, [activeMall, selectedGraphNodeId]);
+
+  const graphNodes = useMemo(() => {
+    if (!activeMall) return [];
+    const materialByKey = new Map();
+    const materialOrder = [];
+    const addMaterial = (material) => {
+      if (!material || !material.name) return;
+      const normalized = normalizeMaterialRef(material);
+      const key = `${normalized.type}:${normalized.name}`;
+      if (!materialByKey.has(key)) {
+        materialByKey.set(key, normalized);
+        materialOrder.push(key);
+      }
+    };
+    for (const goal of activeMall.goals) addMaterial(goal.material);
+    for (const input of activeMall.inputs) addMaterial(input);
+    for (const node of activeMall.productionNodes) {
+      for (const ingredient of node.ingredients || []) addMaterial(ingredient);
+      for (const output of node.outputs || []) addMaterial(output);
+    }
+    const materialNodes = materialOrder.map((key, index) => {
+      const material = materialByKey.get(key);
+      const isOutput = activeMall.goals.some((goal) => goal.material && goal.material.type === material.type && goal.material.name === material.name);
+      return {
+        id: `material-${key}`,
+        type: 'material',
+        data: { label: itemName(material.name, material.type), kind: isOutput ? 'goal' : 'material', subtitle: material.type },
+        position: { x: 60 + (index % 4) * 180, y: 140 + Math.floor(index / 4) * 120 },
+      };
+    });
+    const productionNodes = activeMall.productionNodes.map((node, index) => ({
+      id: `production-${node.id}`,
+      type: 'production',
+      position: node.position || { x: 260 + (index % 3) * 260, y: 180 + Math.floor(index / 3) * 170 },
+      data: {
+        label: node.recipeName || 'Recipe',
+        subtitle: node.machineName || 'Machine',
+        selected: selectedGraphNodeId === node.id,
+      },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      draggable: true,
+    }));
+    return [...materialNodes, ...productionNodes];
+  }, [activeMall, itemName, selectedGraphNodeId]);
+
+  const graphEdges = useMemo(() => {
+    if (!activeMall) return [];
+    const edges = [];
+    for (const node of activeMall.productionNodes) {
+      for (const ingredient of node.ingredients || []) {
+        const ingredientName = normalizeMaterialRef(ingredient);
+        const sourceId = `material-${ingredientName.type}:${ingredientName.name}`;
+        const targetId = `production-${node.id}`;
+        edges.push({ id: `${sourceId}->${targetId}`, source: sourceId, target: targetId, type: 'smoothstep', animated: false, label: '', style: { stroke: '#5a6d66' } });
+      }
+      for (const output of node.outputs || []) {
+        const outputName = normalizeMaterialRef(output);
+        const sourceId = `production-${node.id}`;
+        const targetId = `material-${outputName.type}:${outputName.name}`;
+        edges.push({ id: `${sourceId}->${targetId}`, source: sourceId, target: targetId, type: 'smoothstep', animated: true, style: { stroke: '#277a55' } });
+      }
+    }
+    return edges;
+  }, [activeMall]);
+
+  function handleGraphNodesChange(changes) {
+    if (!activeMall) return;
+    const nextMalls = malls.map((mall) => {
+      if (mall.id !== activeMall.id) return mall;
+      const nextProductionNodes = [...mall.productionNodes];
+      for (const change of changes) {
+        if (change.type !== 'position' || !change.position) continue;
+        const productionId = change.id.replace(/^production-/, '');
+        const index = nextProductionNodes.findIndex((node) => node.id === productionId);
+        if (index === -1) continue;
+        nextProductionNodes[index] = { ...nextProductionNodes[index], position: { x: Number(change.position.x), y: Number(change.position.y) } };
+      }
+      return { ...mall, productionNodes: nextProductionNodes };
+    });
+    persistMalls(nextMalls, activeMall.id);
+  }
+
+  function handleGraphNodeSelection(nodeId) {
+    const productionId = String(nodeId || '').replace(/^production-/, '');
+    setSelectedGraphNodeId(productionId || null);
+  }
+
+  function addProductionNode() {
+    if (!activeMall) return;
+    const candidateRecipes = recipeCatalog.filter((recipe) => recipe.compatibleMachines && recipe.compatibleMachines.length);
+    const recommendation = recommendProductionOptions({
+      goals: activeMall.goals,
+      inputs: activeMall.inputs,
+      recipeCatalog: candidateRecipes,
+      machineCatalog,
+    })[0];
+    const recipe = candidateRecipes.find((entry) => entry.name === recommendation?.recipeName) || candidateRecipes[0];
+    if (!recipe) return;
+    const machineName = recommendation?.machineName || recipe.compatibleMachines[0];
+    const nextNode = normalizeProductionNode({
+      id: crypto.randomUUID(),
+      recipeName: recipe.name,
+      machineName,
+      modules: [],
+      ingredients: recipe.ingredients || [],
+      outputs: recipe.outputs || [],
+      position: { x: 260 + (activeMall.productionNodes.length % 3) * 260, y: 180 + Math.floor(activeMall.productionNodes.length / 3) * 190 },
+    });
+    updateActiveMall({ productionNodes: [...activeMall.productionNodes, nextNode] });
+    setSelectedGraphNodeId(nextNode.id);
+  }
+
+  function saveGraphNode() {
+    if (!activeMall || !selectedGraphNodeId) return;
+    const activeNode = activeMall.productionNodes.find((node) => node.id === selectedGraphNodeId);
+    if (!activeNode) return;
+    const recipe = recipeCatalog.find((entry) => entry.name === graphDraft.recipeName) || recipeCatalog[0];
+    const machineName = graphDraft.machineName || (recipe?.compatibleMachines?.[0] || activeNode.machineName || '');
+    const normalizedModules = (graphDraft.modules || []).map((module) => ({
+      name: typeof module.name === 'string' ? module.name : '',
+      count: Number(module.count ?? 0),
+    })).filter((module) => module.name && Number.isFinite(module.count) && module.count > 0);
+    const nextProductionNodes = activeMall.productionNodes.map((node) => {
+      if (node.id !== selectedGraphNodeId) return node;
+      return normalizeProductionNode({
+        ...node,
+        recipeName: recipe ? recipe.name : node.recipeName,
+        machineName,
+        modules: normalizedModules,
+        ingredients: recipe?.ingredients || node.ingredients || [],
+        outputs: recipe?.outputs || node.outputs || [],
+      });
+    });
+    updateActiveMall({ productionNodes: nextProductionNodes });
+  }
+
   function renderCrafting() {
     const query = search.trim().toLocaleLowerCase();
     const selectedProfileId = activeMall ? activeMall.profileId : activeProfileId;
@@ -399,6 +592,11 @@ function App() {
       return `${machine.label || machine.name} (speed ${machine.speed ?? 'unknown'}, ${machine.moduleSlots} module slots, ${footprint}, ${fluids}; effects: ${machine.allowedEffects.join(', ') || 'none'})`;
     };
     const catalogMachineByName = catalog.machineByName || {};
+    const selectedNode = activeMall?.productionNodes.find((node) => node.id === selectedGraphNodeId) || null;
+    const graphRecipeOptions = recipeCatalog.filter((recipe) => recipe.available !== false && recipe.compatibleMachines?.length);
+    const selectedRecipe = graphRecipeOptions.find((recipe) => recipe.name === graphDraft.recipeName) || graphRecipeOptions[0] || null;
+    const graphMachineOptions = selectedRecipe?.compatibleMachines || (selectedNode?.machineName ? [selectedNode.machineName] : []);
+    const graphModuleOptions = catalog.modules || [];
     return <>
       <div className="craft-toolbar">
         <div className="search-control"><label htmlFor="item-search">Search items</label><input id="item-search" type="search" placeholder="Name or internal ID" value={search} onChange={(event) => setSearch(event.target.value)} autoComplete="off" /></div>
@@ -478,6 +676,68 @@ function App() {
                 <button type="button" className="choice" aria-label={`Remove ${itemName(material.name, material.type)} input`} onClick={() => toggleMallInput(material.name)}>Remove</button>
               </li>)}</ul> : <p className="empty">Promote any item from the list to an external input.</p>}
             </section>
+          </div>
+          <div className="production-graph-panel">
+            <div className="graph-toolbar">
+              <h2>Production graph</h2>
+              <button type="button" className="choice" onClick={addProductionNode}>Add node</button>
+            </div>
+            {activeMall.productionNodes.length ? (
+              <div className="graph-shell">
+                <ReactFlow
+                  nodes={graphNodes}
+                  edges={graphEdges}
+                  nodeTypes={productionNodeTypes}
+                  fitView
+                  onNodesChange={handleGraphNodesChange}
+                  onNodeClick={(_, node) => handleGraphNodeSelection(node.id)}
+                  nodesDraggable
+                  nodesConnectable={false}
+                  elementsSelectable
+                  edgesFocusable={false}
+                  proOptions={{ hideAttribution: true }}
+                >
+                  <Background gap={18} size={1} color="#d8e0d6" />
+                  <Controls showInteractive={false} />
+                </ReactFlow>
+              </div>
+            ) : <p className="empty">No production nodes yet. Add one to build the mall dependency graph.</p>}
+            {selectedNode && (
+              <div className="graph-editor">
+                <h3>Edit selected production node</h3>
+                <label htmlFor="graph-recipe">Recipe</label>
+                <select id="graph-recipe" value={graphDraft.recipeName} onChange={(event) => setGraphDraft((current) => ({ ...current, recipeName: event.target.value, machineName: current.machineName || '' }))}>
+                  {graphRecipeOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.name}</option>)}
+                </select>
+                <label htmlFor="graph-machine">Machine</label>
+                <select id="graph-machine" value={graphDraft.machineName || ''} onChange={(event) => setGraphDraft((current) => ({ ...current, machineName: event.target.value }))}>
+                  {graphMachineOptions.map((machineName) => <option key={machineName} value={machineName}>{machineName}</option>)}
+                </select>
+                <label htmlFor="graph-module">Module</label>
+                <select id="graph-module" value="" onChange={(event) => {
+                  const moduleName = event.target.value;
+                  if (!moduleName) return;
+                  setGraphDraft((current) => ({
+                    ...current,
+                    modules: [...current.modules.filter((module) => module.name !== moduleName), { name: moduleName, count: 1 }],
+                  }));
+                  event.target.value = '';
+                }}>
+                  <option value="">Add a module</option>
+                  {graphModuleOptions.map((module) => <option key={module.name} value={module.name}>{module.name}</option>)}
+                </select>
+                {graphDraft.modules.length ? <ul className="graph-module-list">
+                  {graphDraft.modules.map((module, index) => <li key={`${module.name}-${index}`}>
+                    <span>{module.name}</span>
+                    <input type="number" min="0" step="1" value={module.count} onChange={(event) => setGraphDraft((current) => ({ ...current, modules: current.modules.map((item, itemIndex) => itemIndex === index ? { ...item, count: Number(event.target.value) || 0 } : item) }))} />
+                    <button type="button" className="danger" onClick={() => setGraphDraft((current) => ({ ...current, modules: current.modules.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button>
+                  </li>)}
+                </ul> : <p className="empty">No modules assigned.</p>}
+                <div className="graph-actions">
+                  <button type="button" className="primary" onClick={saveGraphNode}>Save node</button>
+                </div>
+              </div>
+            )}
           </div>
         </> : <p className="empty mall-empty">Create a mall to add goals and external inputs.</p>}
       </section>
