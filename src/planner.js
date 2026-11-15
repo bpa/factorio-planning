@@ -156,6 +156,32 @@ export function normalizeGoal(goal) {
   return { material, targetRate };
 }
 
+export function normalizeBeaconNode(beacon = {}) {
+  const name = typeof beacon?.name === 'string' ? beacon.name.trim() : 'beacon';
+  return {
+    id: typeof beacon?.id === 'string' && beacon.id.trim() ? beacon.id : createStableId(),
+    name: name || 'beacon',
+    modules: Array.isArray(beacon?.modules) ? beacon.modules.map((module) => ({
+      name: typeof module?.name === 'string' ? module.name : '',
+      count: Number(module?.count ?? 0),
+    })).filter((module) => module.name && Number.isFinite(module.count) && module.count >= 0) : [],
+    position: beacon?.position && typeof beacon.position === 'object' ? { x: Number(beacon.position.x ?? 0), y: Number(beacon.position.y ?? 0) } : null,
+  };
+}
+
+export function createBeaconNode(name = 'Beacon', overrides = {}) {
+  return normalizeBeaconNode({ id: createStableId(), name, ...overrides });
+}
+
+export function toggleProductionNodeBeacon(node = {}, beaconId) {
+  if (typeof beaconId !== 'string' || !beaconId.trim()) return normalizeProductionNode(node);
+  const normalized = normalizeProductionNode(node);
+  const nextBeaconIds = new Set(normalized.beaconIds || []);
+  if (nextBeaconIds.has(beaconId)) nextBeaconIds.delete(beaconId);
+  else nextBeaconIds.add(beaconId);
+  return { ...normalized, beaconIds: [...nextBeaconIds] };
+}
+
 export function normalizeMall(mall = {}) {
   const name = typeof mall.name === 'string' ? mall.name.trim() : '';
   if (!name) throw new TypeError('A mall requires a non-empty name.');
@@ -167,7 +193,7 @@ export function normalizeMall(mall = {}) {
     goals: Array.isArray(mall.goals) ? mall.goals.map(normalizeGoal) : [],
     inputs: uniqueMaterials(Array.isArray(mall.inputs) ? mall.inputs.map(normalizeMaterialRef) : []),
     productionNodes: Array.isArray(mall.productionNodes) ? mall.productionNodes.map(normalizeProductionNode) : [],
-    beaconNodes: Array.isArray(mall.beaconNodes) ? mall.beaconNodes : [],
+    beaconNodes: Array.isArray(mall.beaconNodes) ? mall.beaconNodes.map(normalizeBeaconNode) : [],
   };
 }
 

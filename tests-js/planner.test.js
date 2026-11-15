@@ -17,6 +17,7 @@ import {
   datasetStorageKey,
   deleteProfile,
   materialKey,
+  normalizeBeaconNode,
   promoteMaterialToInput,
   rankGoalSuggestions,
   recommendProductionOptions,
@@ -243,6 +244,20 @@ test('step 8 validates profiles, densities, IO counts, and safe CRUD operations'
   const afterDelete = deleteProfile([profile, updateProfile(profile, { id: 'next-profile', name: 'Second', maxIO: 2 })], profile.id);
   assert.equal(afterDelete.length, 1);
   assert.equal(afterDelete[0].name, 'Second');
+});
+
+test('step 11 normalizes beacon nodes and links them to production lines', () => {
+  const beacon = normalizeBeaconNode({ id: 'beacon-1', name: 'beacon', modules: [{ name: 'speed-module', count: 2 }] });
+  assert.equal(beacon.id, 'beacon-1');
+  assert.equal(beacon.modules[0].count, 2);
+
+  const mall = createMall('Beacon plan', {
+    beaconNodes: [beacon],
+    productionNodes: [{ id: 'line-1', recipeName: 'make-product', machineName: 'assembler', beaconIds: ['beacon-1'] }],
+  });
+
+  assert.equal(mall.beaconNodes[0].name, 'beacon');
+  assert.deepEqual(mall.productionNodes[0].beaconIds, ['beacon-1']);
 });
 
 test('step 7 fits integer machine counts to goal rates and reports net material rates', async () => {

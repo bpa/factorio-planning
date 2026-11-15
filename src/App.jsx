@@ -9,12 +9,14 @@ import {
   datasetStorageKey,
   deleteProfile,
   getProfileSummary,
+  normalizeBeaconNode,
   normalizeMall,
   normalizeMaterialRef,
   normalizeProfile,
   normalizeProductionNode,
   rankGoalSuggestions,
   recommendProductionOptions,
+  toggleProductionNodeBeacon,
   updateProfile,
 } from './planner.js';
 
@@ -127,7 +129,9 @@ function App() {
   const [profileDraft, setProfileDraft] = useState({ id: null, name: '', maxFootprint: '', maxIO: '' });
   const [profileError, setProfileError] = useState('');
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState(null);
+  const [selectedBeaconId, setSelectedBeaconId] = useState(null);
   const [graphDraft, setGraphDraft] = useState({ recipeName: '', machineName: '', modules: [] });
+  const [beaconDraft, setBeaconDraft] = useState({ name: '', modules: [] });
 
   useEffect(() => {
     Promise.all([
@@ -433,6 +437,29 @@ function App() {
     });
   }, [activeMall, selectedGraphNodeId]);
 
+  useEffect(() => {
+    if (!activeMall) {
+      setSelectedBeaconId(null);
+      setBeaconDraft({ name: '', modules: [] });
+      return;
+    }
+    if (!selectedBeaconId || !activeMall.beaconNodes.some((beacon) => beacon.id === selectedBeaconId)) {
+      setSelectedBeaconId(activeMall.beaconNodes[0]?.id || null);
+    }
+  }, [activeMall, selectedBeaconId]);
+
+  useEffect(() => {
+    const selectedBeacon = activeMall?.beaconNodes.find((beacon) => beacon.id === selectedBeaconId) || null;
+    if (!selectedBeacon) {
+      setBeaconDraft({ name: '', modules: [] });
+      return;
+    }
+    setBeaconDraft({
+      name: selectedBeacon.name || '',
+      modules: Array.isArray(selectedBeacon.modules) ? selectedBeacon.modules.map((module) => ({ ...module })) : [],
+    });
+  }, [activeMall, selectedBeaconId]);
+
   const graphNodes = useMemo(() => {
     if (!activeMall) return [];
     const materialByKey = new Map();
@@ -566,6 +593,63 @@ function App() {
         outputs: recipe?.outputs || node.outputs || [],
       });
     });
+    updateActiveMall({ productionNodes: nextProductionNodes });
+  }
+
+  function addBeaconNode() {
+    if (!activeMall) return;
+    const beaconName = catalog?.beacons?.[0]?.name || 'beacon';
+    const nextBeacon = normalizeBeaconNode({
+      id: crypto.randomUUID(),
+      name: beaconName,
+      modules: [],
+      position: { x: 0, y: 0 },
+    });
+    const nextMalls = malls.map((mall) => mall.id === activeMall.id ? { ...mall, beaconNodes: [...(mall.beaconNodes || []), nextBeacon] } : mall);
+    persistMalls(nextMalls, activeMall.id);
+    setSelectedBeaconId(nextBeacon.id);
+  }
+
+  function saveBeaconNode() {
+    if (!activeMall || !selectedBeaconId) return;
+    const selectedBeacon = activeMall.beaconNodes.find((beacon) => beacon.id === selectedBeaconId);
+    if (!selectedBeacon) return;
+    const normalizedModules = (beaconDraft.modules || []).map((module) => ({
+      name: typeof module.name === 'string' ? module.name : '',
+      count: Number(module.count ?? 0),
+    })).filter((module) => module.name && Number.isFinite(module.count) && module.count > 0);
+    const nextBeacon = normalizeBeaconNode({
+      ...selectedBeacon,
+      name: typeof beaconDraft.name === 'string' && beaconDraft.name.trim() ? beaconDraft.name.trim() : selectedBeacon.name,
+      modules: normalizedModules,
+    });
+    const nextMalls = malls.map((mall) => mall.id === activeMall.id ? {
+      ...mall,
+      beaconNodes: (mall.beaconNodes || []).map((beacon) => beacon.id === nextBeacon.id ? nextBeacon : beacon),
+    } : mall);
+    persistMalls(nextMalls, activeMall.id);
+  }
+
+  function deleteBeaconNode(beaconId) {
+    if (!activeMall || !beaconId) return;
+    const nextMalls = malls.map((mall) => {
+      if (mall.id !== activeMall.id) return mall;
+      const nextBeaconNodes = (mall.beaconNodes || []).filter((beacon) => beacon.id !== beaconId);
+      const nextProductionNodes = (mall.productionNodes || []).map((node) => ({
+        ...node,
+        beaconIds: (node.beaconIds || []).filter((id) => id !== beaconId),
+      }));
+      return { ...mall, beaconNodes: nextBeaconNodes, productionNodes: nextProductionNodes };
+    });
+    persistMalls(nextMalls, activeMall.id);
+    if (selectedBeaconId === beaconId) setSelectedBeaconId(nextMalls.find((mall) => mall.id === activeMall.id)?.beaconNodes[0]?.id || null);
+  }
+
+  function handleBeaconLinkToggle(beaconId) {
+    if (!activeMall || !selectedGraphNodeId) return;
+    const selectedNode = activeMall.productionNodes.find((node) => node.id === selectedGraphNodeId);
+    if (!selectedNode) return;
+    const nextProductionNodes = activeMall.productionNodes.map((node) => node.id === selectedGraphNodeId ? toggleProductionNodeBeacon(node, beaconId) : node);
     updateActiveMall({ productionNodes: nextProductionNodes });
   }
 
@@ -733,6 +817,56 @@ function App() {
                     <button type="button" className="danger" onClick={() => setGraphDraft((current) => ({ ...current, modules: current.modules.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button>
                   </li>)}
                 </ul> : <p className="empty">No modules assigned.</p>}
+                <h3>Beacon links</h3>
+                {activeMall.beaconNodes.length ? <ul className="graph-module-list">
+                  {activeMall.beaconNodes.map((beacon) => {
+                    const linked = (selectedNode?.beaconIds || []).includes(beacon.id);
+                    return <li key={beacon.id}>
+                      <span>{beacon.name}</span>
+                      <button type="button" className="choice" aria-pressed={linked} onClick={() => handleBeaconLinkToggle(beacon.id)}>{linked ? 'Unlink' : 'Link'}</button>
+                    </li>;
+                  })}
+                </ul> : <p className="empty">No beacons configured for this mall.</p>}
+                <h3>Beacon planning</h3>
+                <div className="mall-inline-control">
+                  <button type="button" className="choice" onClick={addBeaconNode}>Add beacon</button>
+                </div>
+                {activeMall.beaconNodes.length ? <>
+                  <ul className="graph-module-list">
+                    {activeMall.beaconNodes.map((beacon) => <li key={beacon.id}>
+                      <button type="button" className="choice" aria-pressed={selectedBeaconId === beacon.id} onClick={() => setSelectedBeaconId(beacon.id)}>{beacon.name}</button>
+                    </li>)}
+                  </ul>
+                  <label htmlFor="beacon-name">Beacon</label>
+                  <select id="beacon-name" value={beaconDraft.name || ''} onChange={(event) => setBeaconDraft((current) => ({ ...current, name: event.target.value }))}>
+                    <option value="">Select a beacon</option>
+                    {(catalog.beacons || []).map((beacon) => <option key={beacon.name} value={beacon.name}>{beacon.label || beacon.name}</option>)}
+                  </select>
+                  <label htmlFor="beacon-module">Module</label>
+                  <select id="beacon-module" value="" onChange={(event) => {
+                    const moduleName = event.target.value;
+                    if (!moduleName) return;
+                    setBeaconDraft((current) => ({
+                      ...current,
+                      modules: [...current.modules.filter((module) => module.name !== moduleName), { name: moduleName, count: 1 }],
+                    }));
+                    event.target.value = '';
+                  }}>
+                    <option value="">Add a beacon module</option>
+                    {(catalog.modules || []).map((module) => <option key={module.name} value={module.name}>{module.label || module.name}</option>)}
+                  </select>
+                  {beaconDraft.modules.length ? <ul className="graph-module-list">
+                    {beaconDraft.modules.map((module, index) => <li key={`${module.name}-${index}`}>
+                      <span>{module.name}</span>
+                      <input type="number" min="0" step="1" value={module.count} onChange={(event) => setBeaconDraft((current) => ({ ...current, modules: current.modules.map((item, itemIndex) => itemIndex === index ? { ...item, count: Number(event.target.value) || 0 } : item) }))} />
+                      <button type="button" className="danger" onClick={() => setBeaconDraft((current) => ({ ...current, modules: current.modules.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button>
+                    </li>)}
+                  </ul> : <p className="empty">No beacon modules assigned.</p>}
+                  <div className="graph-actions">
+                    <button type="button" className="primary" onClick={saveBeaconNode}>Save beacon</button>
+                    {selectedBeaconId && <button type="button" className="danger" onClick={() => deleteBeaconNode(selectedBeaconId)}>Delete beacon</button>}
+                  </div>
+                </> : null}
                 <div className="graph-actions">
                   <button type="button" className="primary" onClick={saveGraphNode}>Save node</button>
                 </div>
