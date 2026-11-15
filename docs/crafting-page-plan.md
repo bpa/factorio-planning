@@ -44,11 +44,13 @@ Implement these as small, reviewable increments. Each step adds one usable capab
 
 **Verify:** Hand-calculated fixtures validate speed, recipe duration, output quantity, productivity and beacon effects, and expected probabilistic yield. Recommendation tests assert deterministic ordering and reason fields. Verify every machine/recipe/module/count edit changes the calculated rates in the pure model.
 
-### Step 7: Solve machine counts and material balance
+### Step 7: Solve machine counts and material balance (implemented)
 
 **Feature:** Integrate `glpk.js` to solve non-negative integer machine counts for saved recipe/machine/module/beacon choices, minimizing total production machines while meeting every goal target. Balance all internal materials, allow only selected external inputs to cover deficits, count net outputs after internal consumption, and report infeasibility or solver failure without stale results. Use deterministic tie-breaking; do not make profile limits solver constraints.
 
 **Verify:** Solver tests cover a single goal, shared inputs, multiple goals, co-products without double-counting a line, selected external inputs, insufficient-input infeasibility, a feasible and infeasible cycle, duplicate products in separate malls, and repeat-run determinism. Include automation science progression (ore, then plate, then gear as promoted inputs), kovarex, and the optional cryogenic plant case: fluoroketone is an output when no cryogenic plant consumes it, and is not an output when one is present.
+
+**Foundation added:** `solveMallProduction` fits non-negative integer machine counts in `src/planner.js`, balances typed internal materials, applies saved module and linked beacon effects, and returns net inputs, outputs, and goal rates. A continuous feasibility preflight detects contradictory cycles before integer optimization; each solve has a bounded time budget, and infeasible or failed solves return no derived counts or rates. Node tests use GLPK's native entry while the browser uses its worker-backed entry.
 
 ### Step 8: Add constraint profile management
 

@@ -65,6 +65,8 @@ The current assignment store retains its `factorio-crafting-mall-v1` namespace. 
 
 Pure domain functions belong in `src/planner.js` and must not import React or browser UI modules. `src/App.jsx` owns rendering and interaction. Python remains responsible for extracting the static game catalog. JavaScript unit tests use Node's built-in test runner; browser workflow tests use Playwright against the Vite dev server.
 
+`solveMallProduction(config, options)` is asynchronous. It takes the saved goals, selected external inputs, production nodes, and recipe, machine, module, and beacon catalogs. It returns `status: "optimal" | "infeasible" | "solver-failure"`, per-node integer machine counts, and calculated material, input, output, goal, and line rates. Only selected external inputs may have a negative internal balance; goal targets apply to net production after internal consumption. The objective minimizes total machines, then applies a stable node-ID tie-break. Profile limits are not solver constraints. The default total solve budget is 10 seconds; a timeout or solver error returns empty derived results instead of stale counts and rates. Browser callers use the bundled worker-backed GLPK runtime; tests may inject the native Node runtime with `options.glpk`.
+
 ## Decision Source
 
 When the earlier `docs/crafting-page-intent.md` differs from the detailed behavior specification in `docs/crafting-page-plan.md`, use the plan as the current implementation authority. In particular, profiles have footprint and combined-IO advisory limits only (no machine-count limit); mall edit views report material names and net rates without supplier-mall identity; and explicit goal target rates determine production requirements.
